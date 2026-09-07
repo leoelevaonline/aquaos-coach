@@ -1,7 +1,7 @@
 import { extname, resolve } from "node:path";
 import type { ManagedRecord, ManagedStore } from "./managed-store.js";
 import { analyzeVideo, generateThumbnail } from "./video-analysis.js";
-import { analyzeWithVision, type VisionAnalysis, type VisionFallbackReason } from "./vision-client.js";
+import { analyzeWithVision, type VisionAnalysis, type VisionCalibrationSnapshot, type VisionFallbackReason } from "./vision-client.js";
 
 type VideoJob = ManagedRecord & {
   videoId: string;
@@ -52,7 +52,7 @@ export class VideoAnalysisQueue {
     void this.drain();
   }
 
-  enqueue(videoId: string, organizationId: string, force = false) {
+  enqueue(videoId: string, organizationId: string, force = false, calibrationSnapshot?: VisionCalibrationSnapshot) {
     const video = this.store.get("videos", videoId) as VideoRecord | undefined;
     if (!video || video.organizationId !== organizationId || typeof video.filename !== "string") throw new Error("Vídeo não encontrado");
 
@@ -66,6 +66,7 @@ export class VideoAnalysisQueue {
       progress: 0,
       stage: "Aguardando processamento",
       requestedAt: now(),
+      calibrationSnapshot: calibrationSnapshot ? structuredClone(calibrationSnapshot) : undefined,
     }) as VideoJob;
     this.store.update("videos", videoId, {
       status: "processing",
@@ -112,7 +113,8 @@ export class VideoAnalysisQueue {
       const thumbnail = `${video.filename.replace(extname(video.filename), "")}-thumb.jpg`;
       const thumbnailPath = resolve(this.uploadRoot, thumbnail);
       updateProgress(2, "Consultando motor de visão AquaVision");
-      const vision = await analyzeWithVision(videoPath, updateProgress);
+      const calibrationSnapshot = job.calibrationSnapshot as VisionCalibrationSnapshot | undefined;
+      const vision = await analyzeWithVision(videoPath, updateProgress, calibrationSnapshot);
       const visionAttempt: VisionAttempt = vision.kind === "success"
         ? { attemptedAt: now(), durationMs: vision.durationMs, outcome: "success", engine: "AquaVision", engineVersion: vision.analysis.engineVersion, modelVersion: vision.analysis.modelVersion }
         : { attemptedAt: now(), durationMs: vision.durationMs, outcome: "fallback", engine: "AquaVision", fallbackReason: vision.fallbackReason };
@@ -140,6 +142,7 @@ export class VideoAnalysisQueue {
         analysisStage: "Análise concluída",
         analysisJobId: job.id,
         analysis,
+        analysisCalibrationSnapshot: calibrationSnapshot,
         thumbnailUrl: `/uploads/${thumbnail}`,
         ...analysis.metadata,
       }, "analyze");

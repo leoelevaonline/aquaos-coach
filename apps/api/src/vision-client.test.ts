@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { analyzeWithVision, type VisionAnalysis } from "./vision-client.js";
+import { analyzeWithVision, type VisionAnalysis, type VisionCalibrationSnapshot } from "./vision-client.js";
 
 const validAnalysis = {
   engine: "AquaVision",
@@ -15,6 +15,8 @@ const validAnalysis = {
 
 const jsonResponse = (payload: unknown, status = 200) =>
   new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } });
+
+const calibration: VisionCalibrationSnapshot = { origin: "calibração técnica", version: "2026.09.1", cameraId: "camera-fixa-1", poolId: "piscina-olimpica", laneIds: ["4"], coverage: .9, validity: "valid", points: [{ image: [0, 0], world: [0, 0] }, { image: [400, 0], world: [25, 0] }, { image: [400, 200], world: [25, 12.5] }, { image: [0, 200], world: [0, 12.5] }] };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -64,5 +66,12 @@ describe("vision client", () => {
     vi.stubGlobal("fetch", fetchMock);
     await analyzeWithVision("/uploads/treino.mp4");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://vision:8800/analyze");
+  });
+
+  it("propaga o snapshot versionado da câmera sem o alterar", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(validAnalysis));
+    vi.stubGlobal("fetch", fetchMock);
+    await analyzeWithVision("/uploads/treino.mp4", undefined, calibration);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1].body)).calibration).toEqual(calibration);
   });
 });

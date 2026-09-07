@@ -144,6 +144,7 @@ export function InviteModal({ onClose, onSave }: { onClose: () => void; onSave: 
 
 type MetricValidity = "measured" | "unavailable" | "uncalibrated" | "not_validated";
 type SportMetric = { id: string; label: string; status: MetricValidity; unit: string; interval: { startSeconds: number; endSeconds: number }; coverage: number; source: string; sourceVersion: string; unavailableReason?: string; value?: number };
+type MetricAvailability = { available: boolean; reliable: boolean; reason?: string };
 type VisionPerson = {
   id: number;
   idAliases?: number[];
@@ -160,6 +161,7 @@ type VisionPerson = {
   distancePerStroke: number;
   units?: string;
   validity?: Partial<Record<"strokes" | "strokeRate" | "rhythmConsistency" | "avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricValidity>>;
+  metricAvailability?: Partial<Record<"avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricAvailability>>;
   meanConfidence: number;
   coverage: number;
   strokeSignal?: string | null;
@@ -169,7 +171,7 @@ type MotionAnalysis = {
   engine: string;
   engineVersion: string;
   methodology: string;
-  metadata: { durationSeconds: number; width: number; height: number; fps: number; sizeBytes: number; bitrate: number; units?: string; calibrated?: boolean; persons?: number; primaryPersonId?: number; keyframesTruncatedAt?: number | null; capabilities?: { athletes?: boolean; strokes?: boolean; speed?: boolean; pose?: boolean } };
+  metadata: { durationSeconds: number; width: number; height: number; fps: number; sizeBytes: number; bitrate: number; units?: string; calibrated?: boolean; calibrationSnapshot?: { origin: string; version: string; cameraId: string; poolId: string; laneIds: string[]; coverage: number; validity: "valid" | "expired" }; metricAvailability?: Record<"avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricAvailability>; persons?: number; primaryPersonId?: number; keyframesTruncatedAt?: number | null; capabilities?: { athletes?: boolean; strokes?: boolean; speed?: boolean; pose?: boolean } };
   metrics: { detectedCycles?: number; estimatedCadence?: number; rhythmConsistency?: number; meanMotion: number; peakMotion: number };
   sportMetrics?: { contractVersion: string; metrics: SportMetric[] };
   timeline: { time: number; motion: number }[];
@@ -191,6 +193,8 @@ export function metricDisplay(person: VisionPerson, key: keyof NonNullable<Visio
   if (state === "not_validated") return { value: "—", note: "não validado" };
   const units = person.units ?? "px";
   const rendered = `${value}${unit.replace("{u}", units)}`;
+  const availability = person.metricAvailability?.[key as keyof NonNullable<VisionPerson["metricAvailability"]>];
+  if (availability && !availability.reliable) return { value: rendered, note: availability.reason ?? "não confiável" };
   return { value: rendered, note: state === "uncalibrated" ? "sem calibração" : null };
 }
 
@@ -300,7 +304,7 @@ export function VideoReview({ videoId, onClose, onSave }: { videoId: string; onC
   const cycles = analysis?.sportMetrics?.metrics.find((item) => item.id === "cycles");
   const engineNote = analysis
     ? tracksAthletes
-      ? `${people.length} ${people.length === 1 ? "atleta rastreado" : "atletas rastreados"}${analysis.metadata.calibrated ? " · calibrado em metros" : " · sem calibração: distâncias em pixels"}${coverageEndsAt !== null ? ` · pose sincronizada até ${coverageEndsAt.toFixed(0)} s` : ""}`
+      ? `${people.length} ${people.length === 1 ? "atleta rastreado" : "atletas rastreados"}${analysis.metadata.calibrationSnapshot ? ` · ${analysis.metadata.calibrationSnapshot.cameraId} · calibração v${analysis.metadata.calibrationSnapshot.version} · cobertura ${Math.round(analysis.metadata.calibrationSnapshot.coverage * 100)}%${analysis.metadata.metricAvailability?.avgSpeed.reliable ? " · métricas geométricas confiáveis" : ` · métricas geométricas não confiáveis: ${analysis.metadata.metricAvailability?.avgSpeed.reason ?? "verificar calibração"}`}` : " · sem snapshot de calibração: distâncias em pixels"}${coverageEndsAt !== null ? ` · pose sincronizada até ${coverageEndsAt.toFixed(0)} s` : ""}`
       : "Este motor mede apenas o movimento global da cena: não identifica atletas, braçadas nem velocidade."
     : "";
   return <ModalShell title={`${record.athlete ?? fallback.athlete} · ${record.event ?? record.title ?? fallback.event}`} subtitle={`Análise sincronizada · ${analysis?.engine ?? "AquaMotion"} ${analysis?.engineVersion ?? ""}`} onClose={onClose} wide>

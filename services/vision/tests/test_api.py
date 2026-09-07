@@ -98,6 +98,7 @@ def test_analyze_rejects_collinear_calibration(tmp_path):
 def test_analyze_accepts_valid_calibration(tmp_path):
     write_video(str(tmp_path / "treino.mp4"), frames=300)
     calibration = {
+        "origin": "calibração técnica", "version": "2026.09.1", "cameraId": "camera-fixa-1", "poolId": "piscina-olimpica", "laneIds": ["4"], "coverage": 0.9, "validity": "valid",
         "points": [
             {"image": [0.0, 0.0], "world": [0.0, 0.0]},
             {"image": [400.0, 0.0], "world": [25.0, 0.0]},
@@ -109,3 +110,18 @@ def test_analyze_accepts_valid_calibration(tmp_path):
         response = client.post("/analyze", json={"path": "treino.mp4", "targetFps": 10, "calibration": calibration})
         assert response.status_code == 200
         assert response.json()["metadata"]["calibrated"] is True
+        assert response.json()["metadata"]["calibrationSnapshot"]["version"] == "2026.09.1"
+        assert response.json()["metadata"]["metricAvailability"]["avgSpeed"]["reliable"] is True
+
+
+def test_analyze_marks_metrics_unreliable_when_calibration_coverage_is_insufficient(tmp_path):
+    write_video(str(tmp_path / "treino.mp4"), frames=300)
+    calibration = {
+        "origin": "calibração técnica", "version": "2026.09.1", "cameraId": "camera-fixa-1", "poolId": "piscina-olimpica", "laneIds": ["4"], "coverage": 0.5, "validity": "valid",
+        "points": [{"image": [0.0, 0.0], "world": [0.0, 0.0]}, {"image": [400.0, 0.0], "world": [25.0, 0.0]}, {"image": [400.0, 200.0], "world": [25.0, 12.5]}, {"image": [0.0, 200.0], "world": [0.0, 12.5]}],
+    }
+    with make_client(tmp_path, FakePose([{"start_x": 60.0, "start_y": 100.0, "speed": 100.0, "stroke_hz": 1.0}])) as client:
+        response = client.post("/analyze", json={"path": "treino.mp4", "targetFps": 10, "calibration": calibration})
+        assert response.status_code == 200
+        availability = response.json()["metadata"]["metricAvailability"]["avgSpeed"]
+        assert availability == {"available": True, "reliable": False, "reason": "cobertura da calibração insuficiente"}

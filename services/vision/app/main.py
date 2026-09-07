@@ -31,6 +31,13 @@ class CalibrationPair(BaseModel):
 
 
 class CalibrationSpec(BaseModel):
+    origin: str = Field(min_length=1, max_length=160)
+    version: str = Field(min_length=1, max_length=80)
+    cameraId: str = Field(min_length=1, max_length=120)
+    poolId: str = Field(min_length=1, max_length=120)
+    laneIds: list[str] = Field(min_length=1, max_length=12)
+    coverage: float = Field(ge=0, le=1)
+    validity: str = Field(pattern="^(valid|expired)$")
     points: list[CalibrationPair] = Field(min_length=4)
 
     @field_validator("points")
@@ -133,7 +140,7 @@ def create_app(settings: Settings | None = None, pose: object | None = None) -> 
             # Inference libera o GIL; o lock asyncio serializa análises sem bloquear o loop.
             result = await loop.run_in_executor(
                 None,
-                functools.partial(analyze_video, str(video_path), model, calibration_points, options, None, refine_model),
+                functools.partial(analyze_video, str(video_path), model, calibration_points, options, None, refine_model, request.calibration.model_dump() if request.calibration else None),
             )
             result["modelVersion"] = model_version
             return result

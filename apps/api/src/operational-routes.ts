@@ -9,6 +9,7 @@ import { athleteMayAccess, getSession, roleAllows, sessionToken } from "./auth.j
 import { DOCUMENT_UPLOAD_EXTENSIONS, extractDocument, extractSpreadsheetRows, readSafeArchiveEntries, signatureMatches } from "./document-extraction.js";
 import { pipeline } from "node:stream/promises";
 import type { VideoAnalysisQueue } from "./video-analysis-queue.js";
+import type { VisionCalibrationSnapshot } from "./vision-client.js";
 
 export const uploadRoot = process.env.STORAGE_PATH
   ? resolve(process.env.STORAGE_PATH, "uploads")
@@ -56,6 +57,13 @@ function keyframesInWindow(analysis: Record<string, unknown>, from: number, to: 
 }
 
 export function registerOperationalRoutes(app: FastifyInstance, store: ManagedStore, videoQueue?: VideoAnalysisQueue) {
+  const calibrationSnapshotSchema = z.object({
+    origin: z.string().trim().min(1).max(160), version: z.string().trim().min(1).max(80),
+    cameraId: z.string().trim().min(1).max(120), poolId: z.string().trim().min(1).max(120),
+    laneIds: z.array(z.string().trim().min(1).max(40)).min(1).max(12), coverage: z.number().min(0).max(1),
+    validity: z.enum(["valid", "expired"]),
+    points: z.array(z.object({ image: z.tuple([z.number(), z.number()]), world: z.tuple([z.number(), z.number()]) })).min(4).max(32),
+  });
   const protectedKinds = ["ingestions", "prescriptions", "results", "loadSnapshots", "adaptationDecisions", "governance", "users", "authSessions", "videoAnalysisJobs", "invitations"];
   app.get("/api/v1/events", async (request, reply) => {
     const user = await getSession(sessionToken(request));
@@ -369,14 +377,14 @@ export function registerOperationalRoutes(app: FastifyInstance, store: ManagedSt
     const user = await getSession(sessionToken(request));
     if (!roleAllows(user, ["coach", "admin"])) return reply.code(user ? 403 : 401).send({ error: user ? "Ação não autorizada" : "Autenticação necessária" });
     const params = z.object({ id: z.string() }).parse(request.params);
-    const body = z.object({ force: z.boolean().default(false) }).safeParse(request.body ?? {});
+    const body = z.object({ force: z.boolean().default(false), calibration: calibrationSnapshotSchema.optional() }).safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send({ error: "Opções de análise inválidas" });
     const record = store.get("videos", params.id);
     if (!record || record.organizationId !== user!.organizationId || typeof record.filename !== "string") return reply.code(404).send({ error: "Vídeo não encontrado" });
     if (record.analysisStatus === "ready" && !body.data.force) return reply.send({ ...record, job: store.list("videoAnalysisJobs").find((item) => item.id === record.analysisJobId) });
     if (!videoQueue) return reply.code(503).send({ error: "Fila de análise não inicializada" });
     try {
-      const queued = videoQueue.enqueue(params.id, user!.organizationId, body.data.force);
+      const queued = videoQueue.enqueue(params.id, user!.organizationId, body.data.force, body.data.calibration as VisionCalibrationSnapshot | undefined);
       return reply.code(202).send({ ...queued.video, job: queued.job });
     } catch (error) { return reply.code(422).send({ error: error instanceof Error ? error.message : "Não foi possível iniciar a análise" }); }
   });
