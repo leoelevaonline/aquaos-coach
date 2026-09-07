@@ -234,7 +234,8 @@ export function registerOperationalRoutes(app: FastifyInstance, store: ManagedSt
     if (duplicate) { if (existsSync(target)) unlinkSync(target); return reply.code(200).send({ ...duplicate, duplicate: true }); }
     const record = store.create(resource, {
       title: query.data.title ?? file.filename.replace(extension, ""), filename, originalName: file.filename,
-      mimeType: file.mimetype, sizeBytes, url: `/uploads/${filename}`, athleteId: query.data.athleteId,
+      // O contexto do envio não atribui uma pessoa a um track técnico.
+      mimeType: file.mimetype, sizeBytes, url: `/uploads/${filename}`, athleteId: resource === "videos" ? undefined : query.data.athleteId,
       referenceType: query.data.referenceType, referenceId: query.data.referenceId,
       status: resource === "videos" ? "processing" : "ready", analysisStatus: resource === "videos" ? "pending" : undefined,
       organizationId: user.organizationId, actorId: user.id, sha256,
@@ -399,5 +400,47 @@ export function registerOperationalRoutes(app: FastifyInstance, store: ManagedSt
     if (!body.success) return reply.code(400).send({ error: "Marcador inválido" });
     const manualEvents = Array.isArray(record.manualEvents) ? record.manualEvents : [];
     return reply.code(201).send(store.update("videos", params.id, { manualEvents: [...manualEvents, { id: id("event"), ...body.data, createdAt: new Date().toISOString() }] }));
+  });
+
+  app.get("/api/v1/videos/:id/track-assignments", async (request, reply) => {
+    const user = await getSession(sessionToken(request));
+    if (!roleAllows(user, ["coach", "admin"])) return reply.code(user ? 403 : 401).send({ error: user ? "Ação não autorizada" : "Autenticação necessária" });
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const video = store.get("videos", params.id);
+    if (!video || video.organizationId !== user!.organizationId) return reply.code(404).send({ error: "Vídeo não encontrado" });
+    const assignments = store.list("trackAssignments")
+      .filter((item) => item.organizationId === user!.organizationId && item.videoId === params.id)
+      .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
+    const superseded = new Set(assignments.map((item) => item.supersedesAssignmentId).filter((value): value is string => typeof value === "string"));
+    const currentByTrack = Object.fromEntries(assignments.filter((item) => !superseded.has(item.id)).map((item) => [String(item.trackId), item]));
+    return {
+      assignments,
+      currentByTrack,
+      athletes: store.list("athletes").filter((item) => item.organizationId === user!.organizationId).map((item) => ({ id: item.id, name: item.name })),
+    };
+  });
+
+  app.post("/api/v1/videos/:id/tracks/:trackId/assignments", async (request, reply) => {
+    const user = await getSession(sessionToken(request));
+    if (!roleAllows(user, ["coach", "admin"])) return reply.code(user ? 403 : 401).send({ error: user ? "Ação não autorizada" : "Autenticação necessária" });
+    const params = z.object({ id: z.string(), trackId: z.string().min(1).max(80) }).parse(request.params);
+    const body = z.object({ athleteId: z.string().min(1).nullable(), reason: z.string().trim().min(3).max(500) }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "Atribuição inválida" });
+    const video = store.get("videos", params.id);
+    if (!video || video.organizationId !== user!.organizationId) return reply.code(404).send({ error: "Vídeo não encontrado" });
+    const tracks = (video.analysis as { people?: Array<{ id: number | string }> } | undefined)?.people?.map((person) => String(person.id)) ?? [];
+    if (!tracks.includes(params.trackId)) return reply.code(422).send({ error: "Track técnico não existe nesta análise" });
+    if (body.data.athleteId) {
+      const athlete = store.get("athletes", body.data.athleteId);
+      if (!athlete || athlete.organizationId !== user!.organizationId) return reply.code(404).send({ error: "Atleta não encontrado nesta organização" });
+    }
+    const prior = store.list("trackAssignments").find((item) => item.organizationId === user!.organizationId && item.videoId === params.id && item.trackId === params.trackId && !store.list("trackAssignments").some((candidate) => candidate.supersedesAssignmentId === item.id));
+    const assignment = store.create("trackAssignments", {
+      title: `Track ${params.trackId} · atribuição manual`, videoId: params.id, trackId: params.trackId,
+      athleteId: body.data.athleteId, reason: body.data.reason, actorId: user!.id, actorName: user!.name,
+      organizationId: user!.organizationId, supersedesAssignmentId: prior?.id,
+      eventName: "video.track.assignment.recorded", eventVersion: "v1",
+    });
+    return reply.code(201).send(assignment);
   });
 }
