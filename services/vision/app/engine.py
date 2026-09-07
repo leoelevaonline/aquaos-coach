@@ -150,7 +150,7 @@ def _metric_validity(metrics: TrackMetrics, stats: StrokeStats, calibrated: bool
 
 
 def _metric_availability(metrics: TrackMetrics, stats: StrokeStats, calibration: Calibration | None, snapshot: dict | None) -> dict:
-    """Medição em metros só é confiável com geometria, validade e cobertura suficientes."""
+    """A geometria não libera métricas antes da validação do extrator esportivo."""
     reason = None
     if calibration is None:
         reason = "calibração indisponível"
@@ -160,14 +160,13 @@ def _metric_availability(metrics: TrackMetrics, stats: StrokeStats, calibration:
         reason = "cobertura da calibração insuficiente"
     elif calibration.rmse > 0.15:
         reason = "erro de reprojeção acima do limite de confiabilidade"
-    reliable = reason is None
-    has_motion = metrics.duration_seconds > 0
-    has_strokes = stats.count >= 2 and metrics.distance_per_stroke > 0
+    else:
+        reason = "extrator esportivo não validado"
     return {
-        "avgSpeed": {"available": has_motion, "reliable": reliable and has_motion, **({"reason": reason} if reason else {})},
-        "maxSpeed": {"available": has_motion, "reliable": reliable and has_motion, **({"reason": reason} if reason else {})},
-        "distance": {"available": has_motion, "reliable": reliable and has_motion, **({"reason": reason} if reason else {})},
-        "distancePerStroke": {"available": has_strokes, "reliable": reliable and has_strokes, **({"reason": reason} if reason else {})},
+        "avgSpeed": {"available": False, "reliable": False, "reason": reason},
+        "maxSpeed": {"available": False, "reliable": False, "reason": reason},
+        "distance": {"available": False, "reliable": False, "reason": reason},
+        "distancePerStroke": {"available": False, "reliable": False, "reason": reason},
     }
 
 

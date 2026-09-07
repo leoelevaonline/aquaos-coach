@@ -111,7 +111,11 @@ def test_analyze_accepts_valid_calibration(tmp_path):
         assert response.status_code == 200
         assert response.json()["metadata"]["calibrated"] is True
         assert response.json()["metadata"]["calibrationSnapshot"]["version"] == "2026.09.1"
-        assert response.json()["metadata"]["metricAvailability"]["avgSpeed"]["reliable"] is True
+        availability = response.json()["metadata"]["metricAvailability"]["avgSpeed"]
+        assert availability == {"available": False, "reliable": False, "reason": "extrator esportivo não validado"}
+        speed = next(metric for metric in response.json()["sportMetrics"]["metrics"] if metric["id"] == "speed")
+        assert speed["status"] == "not_validated"
+        assert "value" not in speed
 
 
 def test_analyze_marks_metrics_unreliable_when_calibration_coverage_is_insufficient(tmp_path):
@@ -124,4 +128,4 @@ def test_analyze_marks_metrics_unreliable_when_calibration_coverage_is_insuffici
         response = client.post("/analyze", json={"path": "treino.mp4", "targetFps": 10, "calibration": calibration})
         assert response.status_code == 200
         availability = response.json()["metadata"]["metricAvailability"]["avgSpeed"]
-        assert availability == {"available": True, "reliable": False, "reason": "cobertura da calibração insuficiente"}
+        assert availability == {"available": False, "reliable": False, "reason": "cobertura da calibração insuficiente"}
