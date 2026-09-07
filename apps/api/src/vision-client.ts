@@ -22,7 +22,8 @@ export type VisionAnalysis = {
     sampleFps?: number;
     keyframesTruncatedAt?: number | null;
   };
-  metrics: { detectedCycles: number; estimatedCadence: number; rhythmConsistency: number; meanMotion: number; peakMotion: number };
+  metrics: { detectedCycles?: number; estimatedCadence?: number; rhythmConsistency?: number; meanMotion: number; peakMotion: number };
+  sportMetrics?: { contractVersion: string; metrics: Array<{ id: string; status: "measured" | "unavailable" | "uncalibrated" | "not_validated"; unit: string; interval: { startSeconds: number; endSeconds: number }; coverage: number; source: string; sourceVersion: string; unavailableReason?: string; value?: number }> };
   timeline: { time: number; motion: number }[];
   events: { id: string; time: number; category: string; label: string; confidence: number; note?: string; personId?: number }[];
   people?: Array<Record<string, unknown>>;

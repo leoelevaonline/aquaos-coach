@@ -38,23 +38,26 @@ def test_single_swimmer_full_contract(video_factory, fake_pose_factory):
     assert len(analysis["people"]) == 1
 
     metrics = analysis["metrics"]
-    assert 8 <= metrics["detectedCycles"] <= 12
-    assert metrics["estimatedCadence"] == pytest.approx(60, abs=6)
-    assert metrics["rhythmConsistency"] > 80
+    assert "detectedCycles" not in metrics
+    assert "estimatedCadence" not in metrics
     assert "technicalIndex" not in metrics, "índice técnico sem validação não pode ser publicado"
+
+    sport_metrics = analysis["sportMetrics"]
+    assert sport_metrics["contractVersion"] == "sports-metrics/v1"
+    assert sport_metrics["strokeConvention"]["livre"].startswith("Uma braçada")
+    assert {metric["id"] for metric in sport_metrics["metrics"]} == {"laps", "splits", "pace_100m", "speed", "cycles", "cadence", "distance_per_cycle", "start", "turn", "finish", "underwater"}
+    assert all(metric["status"] == "not_validated" and "value" not in metric and metric["unavailableReason"] for metric in sport_metrics["metrics"])
+    assert all({"unit", "interval", "coverage", "source", "sourceVersion"} <= metric.keys() for metric in sport_metrics["metrics"])
 
     assert analysis["timeline"], "timeline não pode ser vazia"
     assert all(0 <= sample["motion"] <= 100 for sample in analysis["timeline"])
-    categories = {event["category"] for event in analysis["events"]}
-    assert categories == {"stroke"}, "nenhum evento artificial de fase"
-    assert all(event["personId"] == analysis["people"][0]["id"] for event in analysis["events"])
-    assert analysis["events"] == sorted(analysis["events"], key=lambda event: event["time"])
+    assert analysis["events"] == [], "eventos de braçada exigem extrator validado"
 
     person = analysis["people"][0]
-    assert person["units"] == "px"
+    assert "units" not in person
     assert person["gaps"] == []
-    assert person["validity"]["strokeRate"] == "measured"
-    assert person["validity"]["distance"] == "uncalibrated"
+    assert "strokeRate" not in person
+    assert "distance" not in person
     assert analysis["metadata"]["primaryPersonId"] == person["id"]
     assert analysis["metadata"]["keyframesTruncatedAt"] is None
 
@@ -87,9 +90,7 @@ def test_two_swimmers_produce_two_entries(video_factory, fake_pose_factory):
     assert analysis["metadata"]["persons"] == 2
     ids = [person["id"] for person in analysis["people"]]
     assert len(set(ids)) == 2
-    # Cada atleta tem os próprios eventos de braçada, não só o principal.
-    event_people = {event["personId"] for event in analysis["events"]}
-    assert event_people == set(ids)
+    assert analysis["events"] == []
 
 
 def test_no_person_raises(video_factory, fake_pose_factory):
@@ -99,16 +100,15 @@ def test_no_person_raises(video_factory, fake_pose_factory):
         analyze_video(video, pose, None, AT_10HZ)
 
 
-def test_calibration_outputs_meters(video_factory, fake_pose_factory):
+def test_calibration_does_not_publish_speed_before_extractor_validation(video_factory, fake_pose_factory):
     video = video_factory(frames=300, fps=30.0)
     pose = fake_pose_factory([{"start_x": 60.0, "start_y": 100.0, "speed": 100.0, "stroke_hz": 1.0}])
     analysis = analyze_video(video, pose, SQUARE, AT_10HZ)
     assert analysis["metadata"]["calibrated"] is True
     assert analysis["metadata"]["units"] == "m"
-    person = analysis["people"][0]
-    # 100 px/s * 0.0625 m/px = 6.25 m/s
-    assert person["avgSpeed"] == pytest.approx(6.25, abs=0.8)
-    assert person["distance"] == pytest.approx(62.5, abs=3.0)
+    metric = next(item for item in analysis["sportMetrics"]["metrics"] if item["id"] == "speed")
+    assert metric["status"] == "not_validated"
+    assert "value" not in metric
 
 
 def test_progress_callback_reports_stages(video_factory, fake_pose_factory):
@@ -131,7 +131,7 @@ def test_refinement_upgrades_pose_quality(video_factory, fake_pose_factory):
     pose_strong = fake_pose_factory([{"start_x": 120.0, "start_y": 120.0, "speed": 20.0, "stroke_hz": 1.0, "confidence": 0.55}])
     refined = analyze_video(video, pose_strong, None, AT_10HZ, refine=FakeRefine(sample_rate=10.0))
     assert refined["people"][0]["meanConfidence"] == pytest.approx(0.85, abs=0.03)
-    assert refined["metrics"]["detectedCycles"] >= 8
+    assert "detectedCycles" not in refined["metrics"]
 
 
 def test_refinement_recovers_long_submersion(video_factory, fake_pose_factory):
@@ -160,7 +160,7 @@ def test_refinement_failure_is_tolerated(video_factory, fake_pose_factory):
 
     analysis = analyze_video(video, pose, None, AT_10HZ, refine=broken_refine)
     assert analysis["engine"] == "AquaVision"
-    assert analysis["metrics"]["detectedCycles"] >= 8
+    assert "detectedCycles" not in analysis["metrics"]
 
 
 def test_keyframes_contract(video_factory, fake_pose_factory):

@@ -6,7 +6,6 @@ import { usePoseAnalysis, type PoseStatus } from "./use-pose-analysis";
 import { drawPoseOverlay } from "./overlay";
 import { ServerTrackingLayer, type TrackedKeyframe } from "./server-track";
 import type { ModelTier } from "./engine";
-import type { AthleteMetrics } from "./metrics";
 
 const MODEL_OPTIONS: Array<{ id: ModelTier; label: string; hint: string }> = [
   { id: "lite", label: "Rápida", hint: "Maior FPS em máquinas modestas" },
@@ -16,14 +15,14 @@ const MODEL_OPTIONS: Array<{ id: ModelTier; label: string; hint: string }> = [
 
 const PRIMARY_JOINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26];
 
-function metricEntries(metrics: AthleteMetrics): Array<{ label: string; value: string }> {
+function metricEntries(): Array<{ label: string; value: string }> {
   return [
-    { label: "Braçadas/min", value: metrics.cadence ? metrics.cadence.toFixed(0) : "—" },
-    { label: "Simetria", value: metrics.cadence ? `${metrics.symmetry}%` : "—" },
-    { label: "Ritmo", value: metrics.cadence ? `${metrics.strokeConsistency}%` : "—" },
-    { label: "Amplitude", value: metrics.armRom ? `${metrics.armRom}°` : "—" },
-    { label: "Tronco", value: metrics.trunkRoll ? `${metrics.trunkRoll}°` : "—" },
-    { label: "Estabilidade", value: metrics.confidence ? `${metrics.stability}%` : "—" },
+    { label: "Braçadas/min", value: "—" },
+    { label: "Simetria", value: "—" },
+    { label: "Ritmo", value: "—" },
+    { label: "Amplitude", value: "—" },
+    { label: "Tronco", value: "—" },
+    { label: "Estabilidade", value: "—" },
   ];
 }
 
@@ -130,7 +129,8 @@ export function LiveAnalysis({ initialSourceUrl }: { initialSourceUrl?: string }
     {analysis.athletes.length > 0 && <div className="live-athletes">
       {analysis.athletes.map((athlete) => <article className="live-athlete-card" key={athlete.id}>
         <header><span className="live-athlete-dot" style={{ background: "#22d3ee" }} /><b>Atleta {athlete.id + 1}</b><small>confiança {athlete.metrics.confidence}%</small></header>
-        <div className="live-metric-grid">{metricEntries(athlete.metrics).map((entry) => <div key={entry.label}><span>{entry.label}</span><strong>{entry.value}</strong></div>)}</div>
+        <div className="live-metric-grid">{metricEntries().map((entry) => <div key={entry.label}><span>{entry.label}</span><strong>{entry.value}</strong></div>)}</div>
+        <small>Métricas esportivas não validadas para esta câmera.</small>
         <div className="live-confidence-bar"><i style={{ width: `${athlete.metrics.confidence}%` }} /></div>
       </article>)}
     </div>}
@@ -169,7 +169,7 @@ function BrowserTrackingLayer({ videoRef, active, numPoses = 1 }: { videoRef: Re
     <canvas ref={canvasRef} className="pose-tracking-canvas" />
     {analysis.status === "loading" && <span className="pose-tracking-chip pose-tracking-chip-loading"><span className="live-spinner" />Carregando rastreamento…</span>}
     {analysis.status === "error" && <span className="pose-tracking-chip pose-tracking-chip-error" role="alert">Rastreamento indisponível neste navegador: {analysis.error}</span>}
-    {athlete && <span className="pose-tracking-chip"><Sparkles size={12} />Atleta {athlete.id + 1} · {Math.round(athlete.metrics.cadence)}/min · {athlete.metrics.confidence}% conf.</span>}
+    {athlete && <span className="pose-tracking-chip"><Sparkles size={12} />Atleta {athlete.id + 1} · métricas esportivas não validadas · {athlete.metrics.confidence}% conf.</span>}
   </>;
 }
 

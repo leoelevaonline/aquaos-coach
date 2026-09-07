@@ -7,7 +7,7 @@
 	"scripts": {
 		"setup": {
 			"enabled": true,
-			"command": "([ -f .env ] || cp .env.example .env) && npm install"
+			"command": "([ -f .env ] || cp .env.example .env) && npm install && (cd services/vision && uv venv .venv && uv pip install -r requirements.txt -r requirements-dev.txt)"
 		},
 		"run": {
 			"enabled": true,
