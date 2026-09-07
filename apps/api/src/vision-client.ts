@@ -2,6 +2,19 @@
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 
+export type VisionCalibrationSnapshot = {
+  origin: string;
+  version: string;
+  cameraId: string;
+  poolId: string;
+  laneIds: string[];
+  coverage: number;
+  validity: "valid" | "expired";
+  points: Array<{ image: [number, number]; world: [number, number] }>;
+};
+
+export type MetricAvailability = { available: boolean; reliable: boolean; reason?: string };
+
 export type VisionAnalysis = {
   engine: string;
   engineVersion: string;
@@ -17,6 +30,8 @@ export type VisionAnalysis = {
     bitrate: number;
     units?: string;
     calibrated?: boolean;
+    calibrationSnapshot?: VisionCalibrationSnapshot;
+    metricAvailability?: Record<"avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricAvailability>;
     persons?: number;
     primaryPersonId?: number;
     sampleFps?: number;
@@ -53,7 +68,7 @@ function visionTimeoutMs() {
  * (serviço offline, timeout, nenhum atleta detectado, payload inválido)
  * devolve uma causa segura para a fila registrar o fallback sem dados brutos.
  */
-export async function analyzeWithVision(filePath: string, onStage?: VisionStage): Promise<VisionResult> {
+export async function analyzeWithVision(filePath: string, onStage?: VisionStage, calibrationSnapshot?: VisionCalibrationSnapshot): Promise<VisionResult> {
   const startedAt = performance.now();
   const result = (fallbackReason: VisionFallbackReason): VisionResult => ({ kind: "fallback", fallbackReason, durationMs: Math.round(performance.now() - startedAt) });
   onStage?.(6, "Detectando atletas e esqueleto com RTMO");
@@ -61,7 +76,7 @@ export async function analyzeWithVision(filePath: string, onStage?: VisionStage)
     const response = await fetch(`${visionUrl()}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: filePath }),
+      body: JSON.stringify({ path: filePath, ...(calibrationSnapshot ? { calibration: calibrationSnapshot } : {}) }),
       signal: AbortSignal.timeout(visionTimeoutMs()),
     });
     if (!response.ok) {

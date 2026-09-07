@@ -149,6 +149,27 @@ def _metric_validity(metrics: TrackMetrics, stats: StrokeStats, calibrated: bool
     }
 
 
+def _metric_availability(metrics: TrackMetrics, stats: StrokeStats, calibration: Calibration | None, snapshot: dict | None) -> dict:
+    """A geometria não libera métricas antes da validação do extrator esportivo."""
+    reason = None
+    if calibration is None:
+        reason = "calibração indisponível"
+    elif snapshot is None or snapshot["validity"] != "valid":
+        reason = "calibração fora da validade"
+    elif snapshot["coverage"] < 0.8:
+        reason = "cobertura da calibração insuficiente"
+    elif calibration.rmse > 0.15:
+        reason = "erro de reprojeção acima do limite de confiabilidade"
+    else:
+        reason = "extrator esportivo não validado"
+    return {
+        "avgSpeed": {"available": False, "reliable": False, "reason": reason},
+        "maxSpeed": {"available": False, "reliable": False, "reason": reason},
+        "distance": {"available": False, "reliable": False, "reason": reason},
+        "distancePerStroke": {"available": False, "reliable": False, "reason": reason},
+    }
+
+
 def _analyze_track(track: Track, calibration: Calibration | None, sample_rate: float) -> dict:
     """Métricas completas de um atleta rastreado (trajetória + braçadas)."""
     pose_samples = track.pose_samples
@@ -315,6 +336,7 @@ def analyze_video(
     options: AnalyzeOptions | None = None,
     on_progress: ProgressCallback | None = None,
     refine: PoseCallable | None = None,
+    calibration_snapshot: dict | None = None,
 ) -> dict:
     """Executa o pipeline completo e devolve a análise no contrato da plataforma."""
     options = options or AnalyzeOptions()
@@ -409,6 +431,7 @@ def analyze_video(
                     "observedDurationSeconds": metrics.observed_duration_seconds,
                     "observedSegments": metrics.observed_segments,
                     "gaps": _track_gaps(track, sample_rate),
+                    "metricAvailability": _metric_availability(metrics, item["stats"], calibration, calibration_snapshot),
                     "meanConfidence": round(track.mean_confidence, 3),
                     "coverage": metrics.coverage,
                 }
@@ -442,6 +465,8 @@ def analyze_video(
                 "units": primary_metrics.units,
                 "calibrated": calibration is not None,
                 "calibrationRmse": round(calibration.rmse, 3) if calibration else None,
+                "calibrationSnapshot": calibration_snapshot,
+                "metricAvailability": _metric_availability(primary_metrics, primary["stats"], calibration, calibration_snapshot),
                 "persons": len(analyzed),
                 "primaryPersonId": primary["track"].track_id,
                 "sampleFps": round(sample_rate, 2),

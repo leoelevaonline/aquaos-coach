@@ -16,6 +16,11 @@ describe("metricDisplay", () => {
     expect(metricDisplay(person, "avgSpeed", person.avgSpeed, " {u}/s")).toEqual({ value: "26.5 px/s", note: "sem calibração" });
   });
 
+  it("expõe o motivo quando a calibração não torna a métrica confiável", () => {
+    const unreliable = { ...person, units: "m", validity: { ...person.validity, avgSpeed: "measured" as const }, metricAvailability: { avgSpeed: { available: true, reliable: false, reason: "cobertura da calibração insuficiente" } } };
+    expect(metricDisplay(unreliable, "avgSpeed", unreliable.avgSpeed, " {u}/s")).toEqual({ value: "26.5 m/s", note: "cobertura da calibração insuficiente" });
+  });
+
   it("mostra travessão e 'não medido' quando a métrica não existe", () => {
     const unmeasured = { ...person, strokeRate: 0, validity: { ...person.validity, strokeRate: "unavailable" as const } };
     expect(metricDisplay(unmeasured, "strokeRate", 0, "/min")).toEqual({ value: "—", note: "não medido" });

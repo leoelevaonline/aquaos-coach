@@ -144,6 +144,7 @@ export function InviteModal({ onClose, onSave }: { onClose: () => void; onSave: 
 
 type MetricValidity = "measured" | "unavailable" | "uncalibrated" | "not_validated";
 type SportMetric = { id: string; label: string; status: MetricValidity; unit: string; interval: { startSeconds: number; endSeconds: number }; coverage: number; source: string; sourceVersion: string; unavailableReason?: string; value?: number };
+type MetricAvailability = { available: boolean; reliable: boolean; reason?: string };
 type VisionPerson = {
   id: number;
   idAliases?: number[];
@@ -151,15 +152,16 @@ type VisionPerson = {
   lastSeen: number;
   durationSeconds: number;
   gaps?: Array<{ from: number; to: number }>;
-  strokes: number;
-  strokeRate: number;
-  rhythmConsistency: number;
-  avgSpeed: number;
-  maxSpeed: number;
-  distance: number;
-  distancePerStroke: number;
+  strokes?: number;
+  strokeRate?: number;
+  rhythmConsistency?: number;
+  avgSpeed?: number;
+  maxSpeed?: number;
+  distance?: number;
+  distancePerStroke?: number;
   units?: string;
   validity?: Partial<Record<"strokes" | "strokeRate" | "rhythmConsistency" | "avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricValidity>>;
+  metricAvailability?: Partial<Record<"avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricAvailability>>;
   meanConfidence: number;
   coverage: number;
   strokeSignal?: string | null;
@@ -169,7 +171,7 @@ type MotionAnalysis = {
   engine: string;
   engineVersion: string;
   methodology: string;
-  metadata: { durationSeconds: number; width: number; height: number; fps: number; sizeBytes: number; bitrate: number; units?: string; calibrated?: boolean; persons?: number; primaryPersonId?: number; keyframesTruncatedAt?: number | null; capabilities?: { athletes?: boolean; strokes?: boolean; speed?: boolean; pose?: boolean } };
+  metadata: { durationSeconds: number; width: number; height: number; fps: number; sizeBytes: number; bitrate: number; units?: string; calibrated?: boolean; calibrationSnapshot?: { origin: string; version: string; cameraId: string; poolId: string; laneIds: string[]; coverage: number; validity: "valid" | "expired" }; metricAvailability?: Record<"avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricAvailability>; persons?: number; primaryPersonId?: number; keyframesTruncatedAt?: number | null; capabilities?: { athletes?: boolean; strokes?: boolean; speed?: boolean; pose?: boolean } };
   metrics: { detectedCycles?: number; estimatedCadence?: number; rhythmConsistency?: number; meanMotion: number; peakMotion: number };
   sportMetrics?: { contractVersion: string; metrics: SportMetric[] };
   timeline: { time: number; motion: number }[];
@@ -185,12 +187,14 @@ const clock = (seconds: number) => `${Math.floor(seconds / 60).toString().padSta
  * Valor de métrica com estado explícito: "—" quando não foi medido, sufixo
  * "px" quando não há calibração. Nunca mostra zero como se fosse medição.
  */
-export function metricDisplay(person: VisionPerson, key: keyof NonNullable<VisionPerson["validity"]>, value: number, unit = ""): { value: string; note: string | null } {
-  const state = person.validity?.[key] ?? (value > 0 ? "measured" : "unavailable");
-  if (state === "unavailable") return { value: "—", note: "não medido" };
+export function metricDisplay(person: VisionPerson, key: keyof NonNullable<VisionPerson["validity"]>, value: number | undefined, unit = ""): { value: string; note: string | null } {
+  const state = person.validity?.[key] ?? (typeof value === "number" && value > 0 ? "measured" : "unavailable");
+  if (state === "unavailable" || typeof value !== "number" || !Number.isFinite(value)) return { value: "—", note: "não medido" };
   if (state === "not_validated") return { value: "—", note: "não validado" };
   const units = person.units ?? "px";
   const rendered = `${value}${unit.replace("{u}", units)}`;
+  const availability = person.metricAvailability?.[key as keyof NonNullable<VisionPerson["metricAvailability"]>];
+  if (availability && !availability.reliable) return { value: rendered, note: availability.reason ?? "não confiável" };
   return { value: rendered, note: state === "uncalibrated" ? "sem calibração" : null };
 }
 
@@ -300,14 +304,14 @@ export function VideoReview({ videoId, onClose, onSave }: { videoId: string; onC
   const cycles = analysis?.sportMetrics?.metrics.find((item) => item.id === "cycles");
   const engineNote = analysis
     ? tracksAthletes
-      ? `${people.length} ${people.length === 1 ? "atleta rastreado" : "atletas rastreados"}${analysis.metadata.calibrated ? " · calibrado em metros" : " · sem calibração: distâncias em pixels"}${coverageEndsAt !== null ? ` · pose sincronizada até ${coverageEndsAt.toFixed(0)} s` : ""}`
+        ? `${people.length} ${people.length === 1 ? "track observado" : "tracks observados"}${analysis.metadata.calibrationSnapshot ? ` · ${analysis.metadata.calibrationSnapshot.cameraId} · calibração v${analysis.metadata.calibrationSnapshot.version} · cobertura ${Math.round(analysis.metadata.calibrationSnapshot.coverage * 100)}% · métricas indisponíveis: ${analysis.metadata.metricAvailability?.avgSpeed.reason ?? "extrator não validado"}` : " · sem snapshot de calibração"}${coverageEndsAt !== null ? ` · pose sincronizada até ${coverageEndsAt.toFixed(0)} s` : ""}`
       : "Este motor mede apenas o movimento global da cena: não identifica atletas, braçadas nem velocidade."
     : "";
   return <ModalShell title={`${record.athlete ?? fallback.athlete} · ${record.event ?? record.title ?? fallback.event}`} subtitle={`Análise sincronizada · ${analysis?.engine ?? "AquaMotion"} ${analysis?.engineVersion ?? ""}`} onClose={onClose} wide>
      <div className="live-analysis-banner"><span className={processing ? "processing" : record.analysisStatus === "failed" ? "failed" : "live"}><i />{processing ? `PROCESSANDO VÍDEO · ${record.analysisProgress ?? 0}%` : record.analysisStatus === "failed" ? "ANÁLISE INTERROMPIDA" : "ANÁLISE ATIVA"}</span><p>{processing ? record.analysisStage ?? "Aguardando processamento" : engineNote || record.analysisError || "Carregando metadados e curva de movimento…"}</p><em>{analysis ? `${analysis.metadata.width}×${analysis.metadata.height} · ${analysis.metadata.fps} fps` : ""}</em></div>
     <div className="review-layout real-review"><div><div className="review-player"><div className="real-video-stage"><video ref={player} src={mediaUrl(record.url)} poster={mediaUrl(record.thumbnailUrl)} playsInline preload="metadata" onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} /><button type="button" className={`pose-toggle ${poseEnabled ? "active" : ""}`} onClick={() => setPoseEnabled((value) => !value)} aria-pressed={poseEnabled} title={serverTrackingAvailable ? "Rastreamento AquaVision do servidor, carregado pela janela de reprodução" : "Rastreamento de pose em tempo real no navegador"}><Sparkles size={15} />IA{serverTrackingAvailable ? " · servidor" : ""}</button>{poseEnabled && <PoseTrackingLayer videoRef={player} active serverKeyframes={windowKeyframes} serverTrackingAvailable={serverTrackingAvailable} serverPersonIds={personIds} selectedPersonId={selectedPerson} coverageEndsAt={coverageEndsAt} />}<button className="video-play-control" onClick={() => void toggle()}>{playing ? <Pause size={23} fill="currentColor" /> : <Play size={23} fill="currentColor" />}</button><span className="player-time">{clock(currentTime)} / {clock(duration)}</span>{phaseLabel ? <span className="active-phase">{phaseLabel}</span> : null}</div><div className="timeline live-timeline" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); seek(((event.clientX - rect.left) / rect.width) * duration); }}><i style={{ width: `${duration ? currentTime / duration * 100 : 0}%` }} />{focus?.gaps?.map((gap) => <s key={`${gap.from}-${gap.to}`} className="timeline-gap" title={`Sem rastreio ${clock(gap.from)}–${clock(gap.to)}`} style={{ left: `${duration ? gap.from / duration * 100 : 0}%`, width: `${duration ? (gap.to - gap.from) / duration * 100 : 0}%` }} />)}{allEvents.map((event) => <em key={event.id} title={`${event.label} · ${clock(event.time)}`} style={{ left: `${duration ? event.time / duration * 100 : 0}%`, background: typeof event.personId === "number" ? trackColor(event.personId, personIds) : zoneDistribution[4].color }} />)}</div></div>
       {tracksAthletes && people.length > 1 ? <div className="athlete-selector" role="tablist" aria-label="Atleta em foco"><button type="button" role="tab" aria-selected={selectedPerson === null} className={selectedPerson === null ? "active" : ""} onClick={() => setSelectedPerson(null)}>Todos</button>{people.map((person) => <button type="button" role="tab" key={person.id} aria-selected={selectedPerson === person.id} className={selectedPerson === person.id ? "active" : ""} onClick={() => setSelectedPerson(person.id)}><span className="tracked-athlete-dot" style={{ background: trackColor(person.id, personIds) }} />Atleta #{person.id}</button>)}</div> : null}
-      {tracksAthletes && focus ? <div className="live-metrics" data-person={focus.id}><div><span>ATLETA #{focus.id}{selectedPerson === null && people.length > 1 ? " · PRINCIPAL" : ""}</span><b>{focusVisible ? "no quadro" : inGap ? "sem rastreio" : "fora do quadro"}</b><em>{Math.round(focus.meanConfidence * 100)}% conf · {focus.coverage}% cobertura</em></div><div><span>BRAÇADAS</span><b>{cycles ? "—" : strokesSoFar}{cycles ? null : <small> / {focus.strokes}</small>}</b><em>{cycles?.status === "not_validated" ? "não validado" : "até este quadro"}</em></div><div><span>CADÊNCIA</span><b>{cadence?.value}</b><em>{cadence?.note ?? `consistência ${consistency?.value}`}</em></div><div><span>VELOCIDADE MÉDIA</span><b>{speed?.value}</b><em>{speed?.note ?? (perStroke && perStroke.note === null ? `${perStroke.value} por ciclo` : "distância por ciclo não medida")}</em></div></div>
+      {tracksAthletes && focus ? <div className="live-metrics" data-person={focus.id}><div><span>TRACK #{focus.id}{selectedPerson === null && people.length > 1 ? " · PRINCIPAL" : ""}</span><b>{focusVisible ? "no quadro" : inGap ? "sem rastreio" : "fora do quadro"}</b><em>{Math.round(focus.meanConfidence * 100)}% conf · {focus.coverage}% cobertura</em></div><div><span>BRAÇADAS</span><b>{cycles ? "—" : strokesSoFar}{cycles || typeof focus.strokes !== "number" ? null : <small> / {focus.strokes}</small>}</b><em>{cycles?.status === "not_validated" ? "não validado" : "até este quadro"}</em></div><div><span>CADÊNCIA</span><b>{cadence?.value}</b><em>{cadence?.note ?? `consistência ${consistency?.value}`}</em></div><div><span>VELOCIDADE MÉDIA</span><b>{speed?.value}</b><em>{speed?.note ?? (perStroke && perStroke.note === null ? `${perStroke.value} por ciclo` : "distância por ciclo não medida")}</em></div></div>
       : analysis ? <div className="live-metrics"><div><span>MOVIMENTO AGORA</span><b>{sample?.motion ?? 0}<small>/100</small></b><i style={{ width: `${sample?.motion ?? 0}%` }} /></div><div><span>PICOS DE MOVIMENTO</span><b>{allEvents.filter((event) => event.category === "motion-peak" && event.time <= currentTime).length}<small> / {analysis.metrics.detectedCycles}</small></b><em>movimento global da cena</em></div><div><span>ATLETAS</span><b>—</b><em>não identificados por este motor</em></div><div><span>CADÊNCIA</span><b>—</b><em>não medida</em></div></div> : null}
       <div className="marker-buttons">{markers.map((marker, index) => <button key={marker} onClick={() => void addMarker(marker, index)}><span style={{ background: zoneDistribution[index].color }}>{marker[0]}</span>{marker}<Plus size={14} /></button>)}</div>
       <VisionCoachPanel videoId={videoId} hasAnalysis={Boolean(analysis)} playing={playing} currentTime={currentTime} seek={seek} engine={analysis?.engine} />
@@ -316,10 +320,10 @@ export function VideoReview({ videoId, onClose, onSave }: { videoId: string; onC
         {tracksAthletes ? <div className="tracked-athletes"><span className="eyebrow">ATLETAS RASTREADOS · {people.length}</span>{people.slice(0, 6).map((person) => {
           const rate = sportMetricDisplay(analysis, "cadence", metricDisplay(person, "strokeRate", person.strokeRate, "/min"));
           const avg = sportMetricDisplay(analysis, "speed", metricDisplay(person, "avgSpeed", person.avgSpeed, " {u}/s"));
-          return <button type="button" className={`tracked-athlete-row ${selectedPerson === person.id ? "active" : ""}`} key={person.id} onClick={() => setSelectedPerson(selectedPerson === person.id ? null : person.id)}><span className="tracked-athlete-dot" style={{ background: trackColor(person.id, personIds) }} /><div><b>Atleta #{person.id}</b><small>{clock(person.firstSeen)}–{clock(person.lastSeen)} · {cycles ? "ciclos não validados" : `${person.strokes} braçadas`} · {rate.value} · {avg.value}{avg.note ? ` (${avg.note})` : ""}</small></div><em>{person.gaps?.length ? `${person.gaps.length} lacuna${person.gaps.length > 1 ? "s" : ""}` : "contínuo"}</em></button>;
+          return <button type="button" className={`tracked-athlete-row ${selectedPerson === person.id ? "active" : ""}`} key={person.id} onClick={() => setSelectedPerson(selectedPerson === person.id ? null : person.id)}><span className="tracked-athlete-dot" style={{ background: trackColor(person.id, personIds) }} /><div><b>Track #{person.id}</b><small>{clock(person.firstSeen)}–{clock(person.lastSeen)} · {cycles ? "ciclos não validados" : typeof person.strokes === "number" ? `${person.strokes} braçadas` : "braçadas indisponíveis"} · {rate.value} · {avg.value}{avg.note ? ` (${avg.note})` : ""}</small></div><em>{person.gaps?.length ? `${person.gaps.length} lacuna${person.gaps.length > 1 ? "s" : ""}` : "contínuo"}</em></button>;
         })}</div> : null}
         <span className="eyebrow">LINHA DO TEMPO · {allEvents.length} EVENTOS</span>{allEvents.slice(0, 14).map((event) => <button className={`analysis-event ${Math.abs(event.time - currentTime) < .5 ? "active" : ""}`} key={event.id} onClick={() => seek(event.time)}><span style={{ background: typeof event.personId === "number" ? trackColor(event.personId, personIds) : zoneDistribution[4].color }}>{eventGlyph(event)}</span><div><b>{event.label}</b><small>{clock(event.time)} · {event.confidence}% confiança</small><p>{event.category === "stroke" ? "Pico periódico do keypoint de braçada." : event.category === "motion-peak" ? "Pico de movimento global da cena (não é braçada)." : "Marcação do treinador."}</p></div></button>)}</aside></div>
-     {saveError && <p className="modal-error review-save-error" role="alert">{saveError}</p>}<footer className="modal-footer"><div className="analysis-summary"><Sparkles size={15} /><span>{analysis ? tracksAthletes && focus ? <><b>Atleta #{focus.id}: {focus.strokes} braçadas</b> · cadência {cadence?.value} · consistência {consistency?.value} · motor {analysis.engine}</> : <><b>{analysis.metrics.detectedCycles} picos de movimento</b> · sem identificação de atletas · motor {analysis.engine}</> : "Sem análise"}</span></div><button className="secondary-button" onClick={onClose}>Fechar</button><button className="primary-button" onClick={() => void save()}><Check size={16} />Salvar revisão</button></footer>
+     {saveError && <p className="modal-error review-save-error" role="alert">{saveError}</p>}<footer className="modal-footer"><div className="analysis-summary"><Sparkles size={15} /><span>{analysis ? tracksAthletes && focus ? <><b>Track #{focus.id}: métricas esportivas indisponíveis</b> · motor {analysis.engine}</> : <><b>{analysis.metrics.detectedCycles ?? 0} picos de movimento</b> · sem identificação de atletas · motor {analysis.engine}</> : "Sem análise"}</span></div><button className="secondary-button" onClick={onClose}>Fechar</button><button className="primary-button" onClick={() => void save()}><Check size={16} />Salvar revisão</button></footer>
   </ModalShell>;
 }
 
