@@ -26,8 +26,9 @@ describe("vision client", () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(validAnalysis));
     vi.stubGlobal("fetch", fetchMock);
     const stages: Array<[number, string]> = [];
-    const analysis = await analyzeWithVision("/uploads/treino.mp4", (progress, stage) => stages.push([progress, stage]));
-    expect(analysis?.metrics.detectedCycles).toBe(10);
+    const result = await analyzeWithVision("/uploads/treino.mp4", (progress, stage) => stages.push([progress, stage]));
+    expect(result.kind).toBe("success");
+    if (result.kind === "success") expect(result.analysis.metrics.detectedCycles).toBe(10);
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/analyze");
@@ -35,26 +36,26 @@ describe("vision client", () => {
     expect(stages.map(([_, stage]) => stage)).toEqual(["Detectando atletas e esqueleto com RTMO", "Compilando métricas por atleta"]);
   });
 
-  it("retorna undefined quando o serviço está indisponível (503)", async () => {
+  it("retorna fallback seguro quando o serviço está indisponível (503)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "modelo não carregado" }, 503)));
-    expect(await analyzeWithVision("/uploads/treino.mp4")).toBeUndefined();
+    await expect(analyzeWithVision("/uploads/treino.mp4")).resolves.toMatchObject({ kind: "fallback", fallbackReason: "service_unavailable" });
   });
 
-  it("retorna undefined quando nenhum atleta é detectado (422)", async () => {
+  it("retorna fallback seguro quando nenhum atleta é detectado (422)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "nenhum atleta" }, 422)));
-    expect(await analyzeWithVision("/uploads/treino.mp4")).toBeUndefined();
+    await expect(analyzeWithVision("/uploads/treino.mp4")).resolves.toMatchObject({ kind: "fallback", fallbackReason: "no_people_detected" });
   });
 
-  it("retorna undefined em erro de rede", async () => {
+  it("retorna fallback seguro em erro de rede", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
-    expect(await analyzeWithVision("/uploads/treino.mp4")).toBeUndefined();
+    await expect(analyzeWithVision("/uploads/treino.mp4")).resolves.toMatchObject({ kind: "fallback", fallbackReason: "network_error" });
   });
 
   it("rejeita payload de outro motor ou malformado", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ engine: "AquaMotion", metrics: {} })));
-    expect(await analyzeWithVision("/uploads/treino.mp4")).toBeUndefined();
+    await expect(analyzeWithVision("/uploads/treino.mp4")).resolves.toMatchObject({ kind: "fallback", fallbackReason: "invalid_response" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ engine: "AquaVision" })));
-    expect(await analyzeWithVision("/uploads/treino.mp4")).toBeUndefined();
+    await expect(analyzeWithVision("/uploads/treino.mp4")).resolves.toMatchObject({ kind: "fallback", fallbackReason: "invalid_response" });
   });
 
   it("usa a VISION_URL configurada", async () => {

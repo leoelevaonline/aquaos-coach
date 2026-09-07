@@ -5,6 +5,7 @@ const DEFAULT_TIMEOUT_MS = 900_000;
 export type VisionAnalysis = {
   engine: string;
   engineVersion: string;
+  modelVersion?: string;
   methodology: string;
   analyzedAt: string;
   metadata: {
@@ -30,6 +31,12 @@ export type VisionAnalysis = {
 
 export type VisionStage = (progress: number, stage: string) => void;
 
+export type VisionFallbackReason = "service_unavailable" | "request_timeout" | "network_error" | "invalid_response" | "no_people_detected" | "request_rejected";
+
+export type VisionResult =
+  | { kind: "success"; analysis: VisionAnalysis; durationMs: number }
+  | { kind: "fallback"; fallbackReason: VisionFallbackReason; durationMs: number };
+
 function visionUrl() {
   return process.env.VISION_URL ?? "http://localhost:8800";
 }
@@ -42,9 +49,11 @@ function visionTimeoutMs() {
 /**
  * Solicita a análise de visão computacional para o vídeo. Qualquer falha
  * (serviço offline, timeout, nenhum atleta detectado, payload inválido)
- * devolve `undefined` para a fila cair no AquaMotion local sem duplicar lógica.
+ * devolve uma causa segura para a fila registrar o fallback sem dados brutos.
  */
-export async function analyzeWithVision(filePath: string, onStage?: VisionStage): Promise<VisionAnalysis | undefined> {
+export async function analyzeWithVision(filePath: string, onStage?: VisionStage): Promise<VisionResult> {
+  const startedAt = performance.now();
+  const result = (fallbackReason: VisionFallbackReason): VisionResult => ({ kind: "fallback", fallbackReason, durationMs: Math.round(performance.now() - startedAt) });
   onStage?.(6, "Detectando atletas e esqueleto com RTMO");
   try {
     const response = await fetch(`${visionUrl()}/analyze`, {
@@ -53,12 +62,15 @@ export async function analyzeWithVision(filePath: string, onStage?: VisionStage)
       body: JSON.stringify({ path: filePath }),
       signal: AbortSignal.timeout(visionTimeoutMs()),
     });
-    if (!response.ok) return undefined;
+    if (!response.ok) {
+      if (response.status === 422) return result("no_people_detected");
+      return result(response.status >= 500 ? "service_unavailable" : "request_rejected");
+    }
     const payload = await response.json() as Partial<VisionAnalysis>;
-    if (payload.engine !== "AquaVision" || !payload.metrics || !Array.isArray(payload.timeline) || !Array.isArray(payload.events)) return undefined;
+    if (payload.engine !== "AquaVision" || !payload.metrics || !Array.isArray(payload.timeline) || !Array.isArray(payload.events)) return result("invalid_response");
     onStage?.(88, "Compilando métricas por atleta");
-    return payload as VisionAnalysis;
-  } catch {
-    return undefined;
+    return { kind: "success", analysis: payload as VisionAnalysis, durationMs: Math.round(performance.now() - startedAt) };
+  } catch (error) {
+    return result(error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "request_timeout" : "network_error");
   }
 }

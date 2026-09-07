@@ -1,7 +1,7 @@
 import { extname, resolve } from "node:path";
 import type { ManagedRecord, ManagedStore } from "./managed-store.js";
 import { analyzeVideo, generateThumbnail } from "./video-analysis.js";
-import { analyzeWithVision, type VisionAnalysis } from "./vision-client.js";
+import { analyzeWithVision, type VisionAnalysis, type VisionFallbackReason } from "./vision-client.js";
 
 type VideoJob = ManagedRecord & {
   videoId: string;
@@ -18,6 +18,16 @@ type VideoRecord = ManagedRecord & {
   filename?: string;
   analysisStatus?: string;
   analysisJobId?: string;
+};
+
+type VisionAttempt = {
+  attemptedAt: string;
+  durationMs: number;
+  outcome: "success" | "fallback";
+  engine: "AquaVision";
+  engineVersion?: string;
+  modelVersion?: string;
+  fallbackReason?: VisionFallbackReason;
 };
 
 const now = () => new Date().toISOString();
@@ -103,11 +113,22 @@ export class VideoAnalysisQueue {
       const thumbnailPath = resolve(this.uploadRoot, thumbnail);
       updateProgress(2, "Consultando motor de visão AquaVision");
       const vision = await analyzeWithVision(videoPath, updateProgress);
+      const visionAttempt: VisionAttempt = vision.kind === "success"
+        ? { attemptedAt: now(), durationMs: vision.durationMs, outcome: "success", engine: "AquaVision", engineVersion: vision.analysis.engineVersion, modelVersion: vision.analysis.modelVersion }
+        : { attemptedAt: now(), durationMs: vision.durationMs, outcome: "fallback", engine: "AquaVision", fallbackReason: vision.fallbackReason };
+      const visionAttempts = [...(Array.isArray(job.visionAttempts) ? job.visionAttempts : []), visionAttempt];
+      // Registra a tentativa antes do processamento local, inclusive se o fallback falhar.
+      this.store.update("videoAnalysisJobs", job.id, {
+        visionAttempts,
+        ...(vision.kind === "success"
+          ? { engine: vision.analysis.engine, engineVersion: vision.analysis.engineVersion, modelVersion: vision.analysis.modelVersion }
+          : { fallbackReason: vision.fallbackReason }),
+      });
       let analysis: Awaited<ReturnType<typeof analyzeVideo>> | VisionAnalysis;
-      if (vision) {
+      if (vision.kind === "success") {
         updateProgress(90, "Gerando quadro de referência");
-        await generateThumbnail(videoPath, thumbnailPath, vision.metadata.durationSeconds);
-        analysis = vision;
+        await generateThumbnail(videoPath, thumbnailPath, vision.analysis.metadata.durationSeconds);
+        analysis = vision.analysis;
       } else {
         updateProgress(4, "Motor de visão indisponível — usando AquaMotion local");
         analysis = await analyzeVideo(videoPath, thumbnailPath, updateProgress);
@@ -122,7 +143,13 @@ export class VideoAnalysisQueue {
         thumbnailUrl: `/uploads/${thumbnail}`,
         ...analysis.metadata,
       }, "analyze");
-      this.store.update("videoAnalysisJobs", job.id, { status: "completed", progress: 100, stage: "Análise concluída", completedAt: now(), result: { videoId: video.id, analyzedAt: analysis.analyzedAt, engine: analysis.engine } });
+      this.store.update("videoAnalysisJobs", job.id, {
+        status: "completed", progress: 100, stage: "Análise concluída", completedAt: now(),
+        visionAttempts,
+        engine: analysis.engine, engineVersion: analysis.engineVersion, modelVersion: "modelVersion" in analysis ? analysis.modelVersion : undefined,
+        fallbackReason: vision.kind === "fallback" ? vision.fallbackReason : undefined,
+        result: { videoId: video.id, analyzedAt: analysis.analyzedAt, engine: analysis.engine },
+      });
       return updated;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha desconhecida na análise";
