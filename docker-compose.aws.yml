@@ -44,6 +44,7 @@ services:
     logging: &logging
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+    networks: [backend]
 
   api:
     build:
@@ -70,6 +71,9 @@ services:
       AUTH_COACH_PASSWORD: ${AUTH_COACH_PASSWORD:-}
       AUTH_ATHLETE_EMAIL: ${AUTH_ATHLETE_EMAIL:-atleta@elevamkt.digital}
       AUTH_ATHLETE_PASSWORD: ${AUTH_ATHLETE_PASSWORD:-}
+    # Resolvers upstream explícitos para nomes externos. O DNS interno do Docker
+    # continua resolvendo os nomes dos serviços (postgres, api, web).
+    dns: ["1.1.1.1", "8.8.8.8"]
     expose:
       - "4000" # apenas na rede interna do compose; Caddy publica
     volumes:
@@ -158,5 +162,6 @@ volumes:
 
 networks:
   edge:
+  # NÃO marcar como internal: a API precisa alcançar o gateway LLM externo.
+  # API/web não possuem `ports`; só o Caddy publica acesso HTTP no host.
   backend:
-    internal: true

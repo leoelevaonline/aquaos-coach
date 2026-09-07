@@ -1,0 +1,25 @@
+name: Validate AWS Compose
+on:
+  push:
+    paths: ['docker-compose.aws.yml', 'scripts/check-aws-compose.mjs', '.github/workflows/aws-compose.yml']
+  pull_request:
+    paths: ['docker-compose.aws.yml', 'scripts/check-aws-compose.mjs', '.github/workflows/aws-compose.yml']
+permissions:
+  contents: read
+jobs:
+  network-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check resolved topology (placeholder values only)
+        env:
+          POSTGRES_PASSWORD: ci-placeholder-not-a-secret
+          CORS_ORIGINS: https://example.invalid
+          PUBLIC_API_URL: https://example.invalid
+          APP_DOMAIN: example.invalid
+        run: |
+          set -o pipefail
+          docker compose -f docker-compose.aws.yml config --format json | node scripts/check-aws-compose.mjs

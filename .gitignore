@@ -11,6 +11,7 @@ dist/
 .env.local
 .env.*.local
 CREDENTIALS.md
+AWS-CREDENTIALS.md
 credentials*.md
 
 # Dados locais da API (estado mutável) — uploads de vídeo de exemplo são versionados
