@@ -16,7 +16,11 @@ afterEach(() => apiRequest.mockReset());
 describe("VideoReview", () => {
   it("busca somente a janela temporal de poses do AquaVision", async () => {
     apiRequest.mockImplementation((path: string) => {
+      if (path === "/api/v1/videos/video-janela/track-assignments") {
+        return Promise.resolve({ assignments: [], currentByTrack: {}, athletes: [] });
+      }
       if (path.includes("/keyframes?")) return Promise.resolve({ keyframes: [{ t: 0, persons: [{ id: 1, kpts: [[1, 2, .9]] }] }] });
+      if (path !== "/api/v1/manage/videos/video-janela") throw new Error(`Unexpected request: ${path}`);
       return Promise.resolve({
         id: "video-janela",
         analysisStatus: "ready",

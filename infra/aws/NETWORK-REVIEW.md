@@ -46,6 +46,16 @@ O script usa as credenciais já provisionadas no ambiente da API, sem exibi-las.
 
 Verificações: consulta real ao Postgres, DNS do banco/gateway, HTTPS, API, cookies de sessão, acesso anônimo negado, contas demo desativadas, consultas do treinador, catálogo RKF, disponibilidade do modelo, resposta sintética de IA, restrições de acesso do atleta e revogação de sessões.
 
+## Evidências de execução
+
+- Correção de infraestrutura publicada no commit `be22f13` e aplicada à EC2.
+- Validação automática do GitHub concluída com sucesso: https://github.com/leoelevaonline/aquaos-coach/actions/runs/34154337066
+- Configuração corrigida aprovada pelo validador; configuração original rejeitada por Postgres fora da rede backend.
+- 34 verificações operacionais em produção sem falhas, incluindo chamada sintética ao modelo.
+- 249 testes locais aprovados: domínio 42, API 152, web 55. As suítes foram executadas separadamente; o teste de janela de vídeo teve seu mock atualizado para respeitar o contrato de atribuições.
+- Rede real `internal=false`, quatro serviços na backend, API sem reinícios e sem OOM no instante da inspeção.
+- Health check público revalidado após a sincronização; PostgreSQL conectado.
+
 ## Limites da verificação
 
 HTTP 200 de uma página não comprova todos os seus botões ou fluxos de escrita. Os testes operacionais e as suítes locais dão evidências sobre os caminhos exercitados; não constituem garantia absoluta de toda a plataforma.
