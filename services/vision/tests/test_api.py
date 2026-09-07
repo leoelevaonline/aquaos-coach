@@ -62,7 +62,9 @@ def test_analyze_returns_full_contract(tmp_path):
         payload = response.json()
         assert payload["engine"] == "AquaVision"
         assert payload["metadata"]["persons"] == 1
-        assert payload["metrics"]["detectedCycles"] >= 8
+        cadence = next(metric for metric in payload["sportMetrics"]["metrics"] if metric["id"] == "cadence")
+        assert cadence["status"] == "not_validated"
+        assert "value" not in cadence
 
 
 def test_analyze_missing_video_returns_404(tmp_path):

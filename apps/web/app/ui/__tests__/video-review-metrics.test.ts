@@ -25,6 +25,11 @@ describe("metricDisplay", () => {
     const legacy = { ...person, validity: undefined, distancePerStroke: 0 };
     expect(metricDisplay(legacy, "distancePerStroke", 0, " {u}")).toEqual({ value: "—", note: "não medido" });
   });
+
+  it("não trata not_validated como valor apresentável", () => {
+    const gated = { ...person, validity: { ...person.validity, strokeRate: "not_validated" as const } };
+    expect(metricDisplay(gated, "strokeRate", gated.strokeRate, "/min")).toEqual({ value: "—", note: "não validado" });
+  });
 });
 
 describe("eventGlyph", () => {

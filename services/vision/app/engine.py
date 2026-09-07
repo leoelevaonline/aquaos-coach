@@ -19,6 +19,7 @@ from .calibration import Calibration, CalibrationPoint, build_calibration
 from .errors import NoPeopleDetected
 from .metrics import TrackMetrics, compute_track_metrics, distance_per_stroke_from_segments, motion_timeline, split_observed_segments
 from .smoothing import MAX_INTERPOLATION_GAP, resample_and_smooth
+from .sports_metrics import unavailable_sports_metrics
 from .strokes import CANDIDATE_KEYPOINTS, StrokeStats, detect_peaks_hysteresis, select_stroke_signal, stroke_statistics_for_segments
 from .tracker import KEYPOINT_VALID_THRESHOLD, ByteTracker, Detection, Track, TrackSample, bbox_from_keypoints, person_score, stitch_tracks
 
@@ -26,7 +27,7 @@ ProgressCallback = Callable[[float, str], None]
 PoseCallable = Callable[..., tuple[np.ndarray, np.ndarray]]
 
 ENGINE_NAME = "AquaVision"
-ENGINE_VERSION = "1.0"
+ENGINE_VERSION = "1.1"
 METHODOLOGY = (
     "Pose one-stage RTMO (COCO-17) refinada por RTMPose top-down no crop de cada atleta rastreado, "
     "+ rastreio BYTE com filtro de Kalman, costura de fragmentos e suavização zero-fase Savitzky-Golay. "
@@ -378,13 +379,13 @@ def analyze_video(
         # unifica identidades, então o player recebe o mapa alias -> pessoa.
         alias_to_person: dict[int, int] = {}
         people = []
+        # Eventos de braçada só entram no contrato após validação do extrator.
         events: list[dict] = []
         for item in analyzed:
             track: Track = item["track"]
             metrics: TrackMetrics = item["metrics"]
             for alias in track.merged_ids:
                 alias_to_person[alias] = track.track_id
-            events.extend(_stroke_events(track.track_id, item["strokeTimes"], track.mean_confidence, item["signalQuality"]))
             people.append(
                 {
                     "id": track.track_id,
@@ -395,22 +396,10 @@ def analyze_video(
                     "observedDurationSeconds": metrics.observed_duration_seconds,
                     "observedSegments": metrics.observed_segments,
                     "gaps": _track_gaps(track, sample_rate),
-                    "strokes": metrics.strokes,
-                    "strokeRate": metrics.stroke_rate,
-                    "rhythmConsistency": metrics.rhythm_consistency,
-                    "avgSpeed": metrics.avg_speed,
-                    "maxSpeed": metrics.max_speed,
-                    "distance": metrics.distance,
-                    "distancePerStroke": metrics.distance_per_stroke,
-                    "units": metrics.units,
-                    "validity": _metric_validity(metrics, item["stats"], calibration is not None),
                     "meanConfidence": round(track.mean_confidence, 3),
                     "coverage": metrics.coverage,
-                    "strokeSignal": item["signal"],
-                    "strokeTimes": item["strokeTimes"],
                 }
             )
-        events.sort(key=lambda event: (event["time"], event["personId"]))
 
         # O player interpola entre amostras: 6 Hz cobre o olho humano e mantém
         # o registro do vídeo leve no store e no SSE. Fragmentos costurados
@@ -448,13 +437,15 @@ def analyze_video(
                 "sampleFps": round(sample_rate, 2),
                 "keyframesTruncatedAt": keyframes_truncated_at,
             },
-            "metrics": {
-                "detectedCycles": primary_metrics.strokes,
-                "estimatedCadence": int(round(primary_metrics.stroke_rate)),
-                "rhythmConsistency": int(round(primary_metrics.rhythm_consistency)),
-                "meanMotion": int(round(primary_metrics.mean_motion)),
-                "peakMotion": int(round(primary_metrics.peak_motion)),
-            },
+            # Movimento global é diagnóstico de vídeo, não métrica esportiva.
+            "metrics": {"meanMotion": int(round(primary_metrics.mean_motion)), "peakMotion": int(round(primary_metrics.peak_motion))},
+            "sportMetrics": unavailable_sports_metrics(
+                source=ENGINE_NAME,
+                source_version=ENGINE_VERSION,
+                start_seconds=primary_metrics.duration_seconds and primary["track"].history[0].timestamp or 0.0,
+                end_seconds=primary["track"].history[-1].timestamp,
+                coverage=primary_metrics.coverage,
+            ),
             "timeline": motion_timeline(primary["times"], primary["points"], calibration),
             "events": events,
             "people": people,

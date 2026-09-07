@@ -204,9 +204,9 @@ REGRAS:
 5. Conecte os indicadores à mecânica do nado: cadência vs. distância por braçada, consistência rítmica, variação de velocidade, assimetrias entre atletas.
 6. Prescreva ajustes concretos e priorizados; sem generalidades vazias.
 7. As métricas são apoio objetivo: a decisão final é sempre do treinador humano. Nunca presuma diagnósticos clínicos ou médicos.
-8. Métrica marcada como "não medido" não existe para você: diga que a plataforma não conseguiu medir e não a substitua por estimativa. Valores em pixels nunca devem ser lidos como metros ou m/s.`;
+8. Métrica marcada como "não medido" ou "não validado" não existe para você: declare-a indisponível e não a substitua por estimativa. Valores em pixels nunca devem ser lidos como metros ou m/s.`;
 
-type MetricValidity = "measured" | "unavailable" | "uncalibrated";
+type MetricValidity = "measured" | "unavailable" | "uncalibrated" | "not_validated";
 
 type VisionPersonRecord = {
   id: number; idAliases?: number[]; firstSeen: number; lastSeen: number; durationSeconds: number; strokes: number;
@@ -221,6 +221,7 @@ export type VisionAnalysisRecord = {
   engine?: string; engineVersion?: string; methodology?: string;
   metadata?: { durationSeconds?: number; width?: number; height?: number; fps?: number; units?: string; calibrated?: boolean; persons?: number; primaryPersonId?: number; sampleFps?: number; keyframesTruncatedAt?: number | null };
   metrics?: { detectedCycles?: number; estimatedCadence?: number; rhythmConsistency?: number; meanMotion?: number; peakMotion?: number };
+  sportMetrics?: { contractVersion: string; metrics: Array<{ id: string; label: string; status: MetricValidity; unit: string; interval: { startSeconds: number; endSeconds: number }; coverage: number; source: string; sourceVersion: string; unavailableReason?: string; value?: number }> };
   timeline?: Array<{ time: number; motion: number }>;
   events?: Array<{ id: string; time: number; category: string; label: string; confidence: number; personId?: number }>;
   people?: VisionPersonRecord[];
@@ -235,6 +236,12 @@ function measured(person: VisionPersonRecord, key: NonNullable<VisionPersonRecor
   if (state === "unavailable") return UNMEASURED;
   if (state === "uncalibrated") return `${esc(value)}${unit} (sem calibração: pixels, não metros)`;
   return `${esc(value)}${unit}`;
+}
+
+function sportMetricSummary(analysis: VisionAnalysisRecord): string | null {
+  const metrics = analysis.sportMetrics?.metrics;
+  if (!metrics?.length) return null;
+  return `MÉTRICAS ESPORTIVAS (${analysis.sportMetrics?.contractVersion}):\n${metrics.map((metric) => `- ${metric.label}: ${metric.status === "measured" ? `${esc(metric.value)} ${metric.unit}` : `indisponível (${metric.status}: ${esc(metric.unavailableReason)})`}`).join("\n")}`;
 }
 
 function visionHeader(analysis: VisionAnalysisRecord, title: string): string {
@@ -257,10 +264,15 @@ export function buildVisionCoachContext(analysis: VisionAnalysisRecord, title: s
   const meta = analysis.metadata ?? {};
   const metrics = analysis.metrics ?? {};
   const sections = [visionHeader(analysis, title)];
+  const sportSummary = sportMetricSummary(analysis);
+  if (sportSummary) sections.push(sportSummary);
+  const sportsGated = Boolean(analysis.sportMetrics?.metrics.some((metric) => metric.status !== "measured"));
   const people = analysis.people ?? [];
   if (people.length) {
     const primary = meta.primaryPersonId ?? people[0]?.id;
-    sections.push(`MÉTRICAS DO ATLETA PRINCIPAL (#${esc(primary)}): ${esc(metrics.detectedCycles ?? 0)} braçadas · cadência ${metrics.estimatedCadence ? `${esc(metrics.estimatedCadence)}/min` : UNMEASURED} · consistência rítmica ${metrics.estimatedCadence ? `${esc(metrics.rhythmConsistency ?? 0)}%` : UNMEASURED}`);
+    sections.push(sportsGated
+      ? `MÉTRICAS DO ATLETA PRINCIPAL (#${esc(primary)}): indisponíveis até a validação dos extratores esportivos.`
+      : `MÉTRICAS DO ATLETA PRINCIPAL (#${esc(primary)}): ${esc(metrics.detectedCycles ?? 0)} braçadas · cadência ${metrics.estimatedCadence ? `${esc(metrics.estimatedCadence)}/min` : UNMEASURED} · consistência rítmica ${metrics.estimatedCadence ? `${esc(metrics.rhythmConsistency ?? 0)}%` : UNMEASURED}`);
     sections.push(`ATLETAS RASTREADOS (${people.length}):\n${people.slice(0, 6).map((person) => {
       const strokeTimes = (person.strokeTimes ?? []).slice(0, 60);
       const extra = (person.strokeTimes ?? []).length > 60 ? " …" : "";
@@ -268,11 +280,11 @@ export function buildVisionCoachContext(analysis: VisionAnalysisRecord, title: s
       const gaps = person.gaps ?? [];
       return [
         `- Atleta #${person.id}: presente de ${esc(person.firstSeen)} s a ${esc(person.lastSeen)} s (${esc(person.durationSeconds)} s rastreados)${gaps.length ? ` · ${gaps.length} lacuna(s) sem rastreio: ${gaps.slice(0, 8).map((gap) => `${esc(gap.from)}-${esc(gap.to)}s`).join(", ")}` : ""}`,
-        `  braçadas ${measured(person, "strokes", person.strokes)} · cadência ${measured(person, "strokeRate", person.strokeRate, "/min")} · consistência ${measured(person, "rhythmConsistency", person.rhythmConsistency, "%")} · distância por braçada ${measured(person, "distancePerStroke", person.distancePerStroke, ` ${units}`)}`,
-        `  velocidade média ${measured(person, "avgSpeed", person.avgSpeed, ` ${units}/s`)} · pico ${measured(person, "maxSpeed", person.maxSpeed, ` ${units}/s`)} · distância ${measured(person, "distance", person.distance, ` ${units}`)}`,
+        sportsGated ? "  métricas esportivas indisponíveis: os extratores ainda não foram validados." : `  braçadas ${measured(person, "strokes", person.strokes)} · cadência ${measured(person, "strokeRate", person.strokeRate, "/min")} · consistência ${measured(person, "rhythmConsistency", person.rhythmConsistency, "%")} · distância por braçada ${measured(person, "distancePerStroke", person.distancePerStroke, ` ${units}`)}`,
+        sportsGated ? "" : `  velocidade média ${measured(person, "avgSpeed", person.avgSpeed, ` ${units}/s`)} · pico ${measured(person, "maxSpeed", person.maxSpeed, ` ${units}/s`)} · distância ${measured(person, "distance", person.distance, ` ${units}`)}`,
         `  confiança média ${esc(Math.round(person.meanConfidence * 100))}% · cobertura de pose ${esc(person.coverage)}%${person.strokeSignal ? ` · sinal de braçada: ${esc(person.strokeSignal)}` : ""}`,
-        strokeTimes.length ? `  braçadas em: ${strokeTimes.map((time) => `${esc(time)}s`).join(", ")}${extra}` : "  sem ciclos completos detectados (janela rastreável curta ou atleta submerso)",
-      ].join("\n");
+        !sportsGated && (strokeTimes.length ? `  braçadas em: ${strokeTimes.map((time) => `${esc(time)}s`).join(", ")}${extra}` : "  sem ciclos completos detectados (janela rastreável curta ou atleta submerso)"),
+      ].filter(Boolean).join("\n");
     }).join("\n")}`);
   } else {
     sections.push("ATLETAS RASTREADOS: nenhum - o rastreamento não encontrou atletas com evidência suficiente neste vídeo.");
@@ -288,7 +300,7 @@ export function buildVisionCoachContext(analysis: VisionAnalysisRecord, title: s
     }
     sections.push(`PERFIL DE MOVIMENTO AO LONGO DO VÍDEO:\n${profile.join("\n")}`);
   }
-  const strokes = (analysis.events ?? []).filter((event) => event.category === "stroke");
+  const strokes = sportsGated ? [] : (analysis.events ?? []).filter((event) => event.category === "stroke");
   if (strokes.length) {
     sections.push(`EVENTOS DE BRAÇADA (${strokes.length}): ${strokes.slice(0, 40).map((event) => `${event.time.toFixed(1)}s${typeof event.personId === "number" ? ` (#${event.personId})` : ""}`).join(", ")}${strokes.length > 40 ? " …" : ""}`);
   }

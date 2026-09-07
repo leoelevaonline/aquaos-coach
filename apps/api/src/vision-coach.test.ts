@@ -80,6 +80,14 @@ describe("buildVisionCoachContext", () => {
     expect(VISION_COACH_PROMPT).toContain("não medido");
   });
 
+  it("declara métricas esportivas não validadas e não expõe números legados", () => {
+    const gated: VisionAnalysisRecord = { ...analysis, sportMetrics: { contractVersion: "sports-metrics/v1", metrics: [{ id: "cadence", label: "cadência", status: "not_validated", unit: "cycles/min", interval: { startSeconds: 0, endSeconds: 10 }, coverage: 87.5, source: "AquaVision", sourceVersion: "1.1", unavailableReason: "Extrator não validado." }] } };
+    const context = buildVisionCoachContext(gated, "Gated");
+    expect(context).toContain("cadência: indisponível (not_validated: Extrator não validado.)");
+    expect(context).not.toContain("cadência 58/min");
+    expect(VISION_COACH_PROMPT).toContain("não validado");
+  });
+
   it("limita o que a IA pode afirmar sobre o AquaMotion", () => {
     const context = buildVisionCoachContext({ engine: "AquaMotion", engineVersion: "1.1-beta", metadata: { durationSeconds: 12 }, metrics: { detectedCycles: 4 }, timeline: [{ time: 0, motion: 10 }] }, "Fallback");
     expect(context).toContain("LIMITE DO MOTOR: AquaMotion");
