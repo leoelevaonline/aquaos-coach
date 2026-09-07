@@ -18,13 +18,15 @@ const kpts = (x: number, y: number, score = 0.9): number[][] => Array.from({ len
 const analysis: VisionAnalysisRecord = {
   engine: "AquaVision",
   engineVersion: "1.0",
-  metadata: { durationSeconds: 10, width: 608, height: 1080, fps: 59.94, units: "px", calibrated: false, persons: 1, sampleFps: 12 },
-  metrics: { detectedCycles: 9, estimatedCadence: 58, rhythmConsistency: 91, meanMotion: 40, peakMotion: 100, technicalIndex: 84 },
+  metadata: { durationSeconds: 10, width: 608, height: 1080, fps: 59.94, units: "px", calibrated: false, persons: 1, primaryPersonId: 7, sampleFps: 12 },
+  metrics: { detectedCycles: 9, estimatedCadence: 58, rhythmConsistency: 91, meanMotion: 40, peakMotion: 100 },
   timeline: Array.from({ length: 20 }, (_, index) => ({ time: index * 0.5, motion: 30 + (index % 5) * 10 })),
-  events: Array.from({ length: 9 }, (_, index) => ({ id: `stroke-${index + 1}`, time: 1 + index, category: "stroke", label: `Braçada ${index + 1}`, confidence: 88 })),
+  events: Array.from({ length: 9 }, (_, index) => ({ id: `stroke-7-${index + 1}`, time: 1 + index, category: "stroke", label: `Braçada ${index + 1} · Atleta #7`, confidence: 88, personId: 7 })),
   people: [{
-    id: 7, firstSeen: 0, lastSeen: 9.9, durationSeconds: 9.9, strokes: 9, strokeRate: 58, rhythmConsistency: 91,
-    avgSpeed: 26.5, maxSpeed: 54.8, distance: 262, distancePerStroke: 29.1, technicalIndex: 84,
+    id: 7, idAliases: [9], firstSeen: 0, lastSeen: 9.9, durationSeconds: 9.9, strokes: 9, strokeRate: 58, rhythmConsistency: 91,
+    avgSpeed: 26.5, maxSpeed: 54.8, distance: 262, distancePerStroke: 29.1, units: "px",
+    gaps: [{ from: 6.1, to: 7.4 }],
+    validity: { strokes: "measured", strokeRate: "measured", rhythmConsistency: "measured", avgSpeed: "uncalibrated", maxSpeed: "uncalibrated", distance: "uncalibrated", distancePerStroke: "uncalibrated" },
     meanConfidence: 0.81, coverage: 87.5, strokeSignal: "punho esq. (y)", strokeTimes: [1, 2, 3, 4, 5, 6, 7, 8, 9],
   }],
   keyframes: [
@@ -56,10 +58,32 @@ describe("buildVisionCoachContext", () => {
     expect(context).toContain("Treino técnico diurno");
     expect(context).toContain("Atleta #7");
     expect(context).toContain("cadência 58/min");
-    expect(context).toContain("sem calibração (unidades: px)");
+    expect(context).toContain("sem calibração (unidades: px - velocidades e distâncias NÃO são metros)");
     expect(context).toContain("braçadas em: 1s, 2s, 3s");
     expect(context).toContain("PERFIL DE MOVIMENTO AO LONGO DO VÍDEO");
     expect(context).toContain("EVENTOS DE BRAÇADA (9)");
+    expect(context).toContain("1 lacuna(s) sem rastreio: 6.1-7.4s");
+    expect(context).toContain("velocidade média 26.5 px/s (sem calibração: pixels, não metros)");
+    expect(context).not.toContain("índice técnico");
+  });
+
+  it("declara métricas não medidas em vez de preencher com zero", () => {
+    const unmeasured: VisionAnalysisRecord = {
+      ...analysis,
+      metrics: { detectedCycles: 1, estimatedCadence: 0, rhythmConsistency: 0, meanMotion: 20, peakMotion: 60 },
+      people: [{ ...analysis.people![0], strokes: 1, strokeRate: 0, rhythmConsistency: 0, distancePerStroke: 0, validity: { ...analysis.people![0].validity, strokeRate: "unavailable", rhythmConsistency: "unavailable", distancePerStroke: "unavailable" } }],
+    };
+    const context = buildVisionCoachContext(unmeasured, "Curto");
+    expect(context).toContain("cadência não medido");
+    expect(context).toContain("distância por braçada não medido");
+    expect(context).not.toContain("cadência 0/min");
+    expect(VISION_COACH_PROMPT).toContain("não medido");
+  });
+
+  it("limita o que a IA pode afirmar sobre o AquaMotion", () => {
+    const context = buildVisionCoachContext({ engine: "AquaMotion", engineVersion: "1.1-beta", metadata: { durationSeconds: 12 }, metrics: { detectedCycles: 4 }, timeline: [{ time: 0, motion: 10 }] }, "Fallback");
+    expect(context).toContain("LIMITE DO MOTOR: AquaMotion");
+    expect(context).toContain("nenhum - o rastreamento não encontrou atletas");
   });
 
   it("declara ausência de atletas com honestidade", () => {
@@ -69,18 +93,25 @@ describe("buildVisionCoachContext", () => {
 });
 
 describe("buildLiveWindowContext", () => {
-  it("destaca atletas no quadro e braçadas da janela", () => {
+  it("destaca atletas no quadro e braçadas da janela, sem antecipar o futuro", () => {
     const context = buildLiveWindowContext(analysis, 4.2, 4);
     expect(context).toContain("INSTANTE ATUAL: t = 4.2 s");
     expect(context).toContain("Atleta #7");
-    expect(context).toContain("BRAÇADAS NESTA JANELA: 1.0s, 2.0s, 3.0s, 4.0s, 5.0s");
+    expect(context).toContain("BRAÇADAS NESTA JANELA: 1.0s (#7), 2.0s (#7), 3.0s (#7), 4.0s (#7)");
+    expect(context).not.toContain("5.0s");
     expect(context).toContain("deslocamento estimado");
+    expect(context).toContain("pixels da imagem, não em metros");
   });
 
   it("informa quando ninguém tem pose confiável na janela", () => {
     const context = buildLiveWindowContext(analysis, 8.5, 2);
     expect(context).toContain("nenhum com pose confiável nesta janela");
-    expect(context).toContain("BRAÇADAS NESTA JANELA: 7.0s, 8.0s, 9.0s");
+    expect(context).toContain("BRAÇADAS NESTA JANELA: 7.0s (#7), 8.0s (#7)");
+  });
+
+  it("avisa quando a janela ultrapassa a cobertura dos keyframes", () => {
+    const context = buildLiveWindowContext({ ...analysis, metadata: { ...analysis.metadata, keyframesTruncatedAt: 5 } }, 9, 2);
+    expect(context).toContain("a pose sincronizada não cobre este trecho");
   });
 });
 

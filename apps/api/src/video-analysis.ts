@@ -70,32 +70,29 @@ export async function analyzeVideo(filePath: string, thumbnailPath?: string, onP
   const events = peaks.map((peak, index) => ({
     id: `motion-${index + 1}`,
     time: peak.time,
-    category: "stroke",
-    label: `Ciclo detectado ${index + 1}`,
+    category: "motion-peak",
+    label: `Pico de movimento ${index + 1}`,
     confidence: Math.min(98, Math.max(55, Math.round(55 + peak.motion * .43))),
   }));
-  const phases = [
-    { id: "phase-entry", time: Math.max(.2, duration * .08), category: "entry", label: "Entrada no campo de análise", confidence: 93 },
-    { id: "phase-speed", time: duration * .35, category: "speed", label: "Velocidade estabilizada", confidence: 88 },
-    { id: "phase-technique", time: duration * .62, category: "technique", label: "Janela técnica principal", confidence: 91 },
-    { id: "phase-exit", time: duration * .9, category: "finish", label: "Saída do campo de análise", confidence: 90 },
-  ].map((event) => ({ ...event, time: Math.round(event.time * 1000) / 1000 }));
 
-  await onProgress?.(78, "Calculando ciclos e consistência técnica");
+  await onProgress?.(78, "Calculando periodicidade do movimento");
   if (thumbnailPath) {
     await onProgress?.(88, "Gerando quadro de referência");
     await generateThumbnail(filePath, thumbnailPath, duration);
   }
   await onProgress?.(100, "Análise concluída");
 
+  // Sem detecção de atletas, o AquaMotion mede apenas movimento global do
+  // quadro: não há identidade, braçada, velocidade nem fases - e o contrato
+  // declara isso em vez de preencher com valores derivados.
   return {
     engine: "AquaMotion",
-    engineVersion: "1.0-beta",
-    methodology: "Análise temporal de diferença entre quadros a 8 Hz. Ciclos e fases devem ser validados pelo treinador.",
+    engineVersion: "1.1-beta",
+    methodology: "Diferença temporal entre quadros a 8 Hz (movimento global da cena). Não identifica atletas nem braçadas; a periodicidade do movimento é um indicador de apoio para revisão, não uma medição de cadência.",
     analyzedAt: new Date().toISOString(),
-    metadata: { durationSeconds: duration, width: video?.width ?? 0, height: video?.height ?? 0, fps: Math.round(ratio(video?.r_frame_rate) * 100) / 100, sizeBytes: Number(probe.format?.size ?? 0), bitrate: Number(probe.format?.bit_rate ?? 0) },
-    metrics: { detectedCycles: peaks.length, estimatedCadence: cadence, rhythmConsistency: consistency, meanMotion: Math.round(average), peakMotion: Math.max(...timeline.map((sample) => sample.motion), 0), technicalIndex: Math.round((consistency * .55) + (Math.min(100, average * 1.8) * .45)) },
+    metadata: { durationSeconds: duration, width: video?.width ?? 0, height: video?.height ?? 0, fps: Math.round(ratio(video?.r_frame_rate) * 100) / 100, sizeBytes: Number(probe.format?.size ?? 0), bitrate: Number(probe.format?.bit_rate ?? 0), persons: 0, capabilities: { athletes: false, strokes: false, speed: false, pose: false } },
+    metrics: { detectedCycles: peaks.length, estimatedCadence: cadence, rhythmConsistency: consistency, meanMotion: Math.round(average), peakMotion: Math.max(...timeline.map((sample) => sample.motion), 0) },
     timeline,
-    events: [...phases, ...events].sort((a, b) => a.time - b.time),
+    events: events.sort((a, b) => a.time - b.time),
   };
 }
