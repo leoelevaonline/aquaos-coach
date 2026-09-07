@@ -31,6 +31,18 @@ function syntheticPose(time: number, frequency = 1.2, offsetX = 0): Landmark[] {
   return landmarks;
 }
 
+function cadenceAtPlaybackRate(playbackRate: number): number {
+  const tracker = new AthleteTracker();
+  const realtimeSampleHz = 20;
+  const videoDurationSeconds = 8;
+  let metrics = tracker.metrics;
+  for (let frame = 0; frame <= videoDurationSeconds * realtimeSampleHz / playbackRate; frame += 1) {
+    const videoTime = frame / realtimeSampleHz * playbackRate;
+    metrics = tracker.push({ time: videoTime * 1000, landmarks: syntheticPose(videoTime) });
+  }
+  return metrics.cadence;
+}
+
 describe("angleAt", () => {
   it("calcula o ângulo interno no vértice", () => {
     expect(angleAt({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 })).toBeCloseTo(90, 5);
@@ -89,6 +101,15 @@ describe("AthleteTracker", () => {
     const tracker = new AthleteTracker();
     const metrics = tracker.push({ time: 0, landmarks: syntheticPose(0) });
     expect(metrics.cadence).toBe(0);
+  });
+
+  it("mantém a cadência na escala do vídeo em 0,5x, 1x e 2x", () => {
+    const cadences = [0.5, 1, 2].map(cadenceAtPlaybackRate);
+    cadences.forEach((cadence) => {
+      expect(cadence).toBeGreaterThan(60);
+      expect(cadence).toBeLessThan(84);
+    });
+    expect(Math.max(...cadences) - Math.min(...cadences)).toBeLessThan(6);
   });
 });
 

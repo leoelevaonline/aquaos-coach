@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createPoseSession, type ModelTier, type PoseSession, type TrackedAthlete } from "./engine";
+import {
+  createPoseSession,
+  hasNewVideoFrame,
+  isVideoTimelineDiscontinuity,
+  type ModelTier,
+  type PoseSession,
+  type TrackedAthlete,
+} from "./engine";
 import { drawPoseOverlay } from "./overlay";
 
 export type PoseStatus = "idle" | "loading" | "running" | "error";
@@ -29,7 +36,8 @@ export function usePoseAnalysis({ enabled, videoRef, canvasRef, numPoses, model,
 
   const sessionRef = useRef<PoseSession | null>(null);
   const rafRef = useRef(0);
-  const lastFrameRef = useRef(-1);
+  const lastVideoTimeRef = useRef<number | null>(null);
+  const timelineVersionRef = useRef(0);
   const frameTimesRef = useRef<number[]>([]);
   const uiClockRef = useRef(0);
   const latestRef = useRef<TrackedAthlete[]>([]);
@@ -39,8 +47,20 @@ export function usePoseAnalysis({ enabled, videoRef, canvasRef, numPoses, model,
     if (!enabled) return;
     let cancelled = false;
     let disposed = false;
+    let observedVideo: HTMLVideoElement | null = null;
     setStatus("loading");
     setError("");
+
+    const resetTimeline = () => {
+      sessionRef.current?.reset();
+      lastVideoTimeRef.current = null;
+      timelineVersionRef.current += 1;
+      latestRef.current = [];
+      frameTimesRef.current = [];
+      setAthletes([]);
+      const canvas = canvasRef.current;
+      if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    };
 
     const tick = () => {
       const session = sessionRef.current;
@@ -51,10 +71,20 @@ export function usePoseAnalysis({ enabled, videoRef, canvasRef, numPoses, model,
         canvas.width = canvas.clientWidth;
         canvas.height = canvas.clientHeight;
       }
-      if (video.readyState >= 2 && video.currentTime !== lastFrameRef.current) {
-        lastFrameRef.current = video.currentTime;
-        void session.process(video, performance.now()).then((output) => {
-          if (!output || disposed) return;
+      const videoTimeMs = Math.round(video.currentTime * 1000);
+      if (video.readyState >= 2 && hasNewVideoFrame(lastVideoTimeRef.current, videoTimeMs)) {
+        const previousVideoTimeMs = lastVideoTimeRef.current;
+        lastVideoTimeRef.current = videoTimeMs;
+        if (isVideoTimelineDiscontinuity(previousVideoTimeMs, videoTimeMs)) {
+          resetTimeline();
+          lastVideoTimeRef.current = videoTimeMs;
+        }
+        const timelineVersion = timelineVersionRef.current;
+        void session.process(video, {
+          mediaPipeTimeMs: performance.now(),
+          videoTimeMs,
+        }).then((output) => {
+          if (!output || disposed || timelineVersion !== timelineVersionRef.current) return;
           processFailuresRef.current = 0;
           latestRef.current = output.athletes;
           frameTimesRef.current = [...frameTimesRef.current.slice(-60), performance.now()];
@@ -90,7 +120,10 @@ export function usePoseAnalysis({ enabled, videoRef, canvasRef, numPoses, model,
         const session = await createPoseSession({ numPoses, model });
         if (cancelled) { void session.close(); return; }
         sessionRef.current = session;
-        lastFrameRef.current = -1;
+        lastVideoTimeRef.current = null;
+        timelineVersionRef.current = 0;
+        observedVideo = videoRef.current;
+        observedVideo?.addEventListener("seeking", resetTimeline);
         setStatus("running");
         rafRef.current = requestAnimationFrame(tick);
       } catch (cause) {
@@ -103,9 +136,12 @@ export function usePoseAnalysis({ enabled, videoRef, canvasRef, numPoses, model,
     return () => {
       cancelled = true;
       disposed = true;
+      observedVideo?.removeEventListener("seeking", resetTimeline);
       cancelAnimationFrame(rafRef.current);
       const session = sessionRef.current;
       sessionRef.current = null;
+      lastVideoTimeRef.current = null;
+      timelineVersionRef.current += 1;
       latestRef.current = [];
       frameTimesRef.current = [];
       setAthletes([]);

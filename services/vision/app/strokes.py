@@ -16,6 +16,8 @@ MIN_STROKE_PERIOD = 0.4  # s - limite fisiológico inferior (~150 ciclos/min)
 MAX_STROKE_PERIOD = 3.0  # s - braçada longa de águas abertas
 MIN_STROKE_INTERVAL = 0.35  # s - intervalo mínimo aceito entre picos
 STROKE_SIGNAL_MIN_SCORE = 0.35  # autocorrelação mínima para aceitar o sinal
+MIN_CADENCE_INTERVALS = 2
+MIN_RHYTHM_INTERVALS = 3
 
 # Índices COCO-17: 0 nariz, 5/6 ombros, 7/8 cotovelos, 9/10 punhos,
 # 11/12 quadris, 13/14 joelhos, 15/16 tornozelos.
@@ -100,36 +102,60 @@ def detect_peaks_hysteresis(times: np.ndarray, values: np.ndarray, high_margin: 
     return events
 
 
-def robust_intervals(stroke_times: list[float]) -> list[float]:
-    """Intervalos entre ciclos, filtrados por MAD para descartar outliers."""
+def valid_stroke_intervals(stroke_times: list[float]) -> list[tuple[float, float]]:
+    """Pares consecutivos de ciclos filtrados sem criar intervalos implícitos."""
     if len(stroke_times) < 2:
         return []
-    intervals = np.diff(np.asarray(stroke_times, dtype=np.float64))
-    intervals = intervals[(intervals >= MIN_STROKE_INTERVAL) & (intervals <= MAX_STROKE_PERIOD * 1.5)]
+    times = np.asarray(stroke_times, dtype=np.float64)
+    starts, ends = times[:-1], times[1:]
+    intervals = ends - starts
+    valid = (intervals >= MIN_STROKE_INTERVAL) & (intervals <= MAX_STROKE_PERIOD * 1.5)
+    starts, ends, intervals = starts[valid], ends[valid], intervals[valid]
     if intervals.size < 2:
-        return intervals.tolist()
+        return [(float(start), float(end)) for start, end in zip(starts, ends)]
     median = float(np.median(intervals))
     mad = float(np.median(np.abs(intervals - median))) * 1.4826
     # Séries quase regulares têm MAD ~ 0; usa tolerância proporcional para ainda cortar outliers.
     tolerance = 2.5 * mad if mad > 1e-9 else 0.25 * median
     if tolerance > 0:
-        intervals = intervals[np.abs(intervals - median) <= tolerance]
-    return intervals.tolist()
+        valid = np.abs(intervals - median) <= tolerance
+        starts, ends = starts[valid], ends[valid]
+    return [(float(start), float(end)) for start, end in zip(starts, ends)]
+
+
+def robust_intervals(stroke_times: list[float]) -> list[float]:
+    """Intervalos entre ciclos, filtrados por MAD para descartar outliers."""
+    return [end - start for start, end in valid_stroke_intervals(stroke_times)]
 
 
 def stroke_statistics(stroke_times: list[float]) -> StrokeStats:
-    intervals = robust_intervals(stroke_times)
-    if not intervals:
-        return StrokeStats(count=len(stroke_times), rate_per_minute=0.0, consistency=0.0, intervals=[])
+    return stroke_statistics_for_segments([stroke_times])
+
+
+def stroke_statistics_for_segments(stroke_segments: list[list[float]]) -> StrokeStats:
+    """Agrega somente intervalos internos aos trechos observados."""
+    intervals = [
+        end - start
+        for stroke_times in stroke_segments
+        for start, end in valid_stroke_intervals(stroke_times)
+    ]
+    count = sum(len(stroke_times) for stroke_times in stroke_segments)
+    rounded = [round(value, 3) for value in intervals]
+    if len(intervals) < MIN_CADENCE_INTERVALS:
+        return StrokeStats(count=count, rate_per_minute=0.0, consistency=0.0, intervals=rounded)
     mean = float(np.mean(intervals))
     deviation = float(np.std(intervals))
     rate = 60.0 / float(np.median(intervals)) if np.median(intervals) > 0 else 0.0
-    consistency = max(0.0, min(100.0, 100.0 * (1.0 - deviation / mean))) if mean > 0 else 0.0
+    consistency = (
+        max(0.0, min(100.0, 100.0 * (1.0 - deviation / mean)))
+        if len(intervals) >= MIN_RHYTHM_INTERVALS and mean > 0
+        else 0.0
+    )
     return StrokeStats(
-        count=len(stroke_times),
+        count=count,
         rate_per_minute=rate,
         consistency=consistency,
-        intervals=[round(value, 3) for value in intervals],
+        intervals=rounded,
     )
 
 

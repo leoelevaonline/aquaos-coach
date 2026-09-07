@@ -17,9 +17,9 @@ import numpy as np
 
 from .calibration import Calibration, CalibrationPoint, build_calibration
 from .errors import NoPeopleDetected
-from .metrics import TrackMetrics, compute_track_metrics, motion_timeline
-from .smoothing import resample_and_smooth
-from .strokes import CANDIDATE_KEYPOINTS, StrokeStats, detect_peaks_hysteresis, select_stroke_signal, stroke_statistics
+from .metrics import TrackMetrics, compute_track_metrics, distance_per_stroke_from_segments, motion_timeline, split_observed_segments
+from .smoothing import MAX_INTERPOLATION_GAP, resample_and_smooth
+from .strokes import CANDIDATE_KEYPOINTS, StrokeStats, detect_peaks_hysteresis, select_stroke_signal, stroke_statistics_for_segments
 from .tracker import KEYPOINT_VALID_THRESHOLD, ByteTracker, Detection, Track, TrackSample, bbox_from_keypoints, person_score, stitch_tracks
 
 ProgressCallback = Callable[[float, str], None]
@@ -106,43 +106,45 @@ def _keypoint_series(samples: list, keypoint: int, axis: int) -> tuple[np.ndarra
     return np.asarray(times, dtype=np.float64), np.asarray(values, dtype=np.float64)
 
 
-def _stroke_events(person_id: int, stroke_times: list[float], confidence: float) -> list[dict]:
-    safe_confidence = int(round(max(55.0, min(98.0, 40.0 + 60.0 * confidence))))
+def _stroke_events(person_id: int, stroke_times: list[float], pose_quality: float, signal_quality: float) -> list[dict]:
+    heuristic_quality = int(round(100.0 * max(0.0, min(1.0, (pose_quality + signal_quality) / 2.0))))
     return [
         {
             "id": f"stroke-{person_id}-{index + 1}",
             "time": round(float(time), 2),
             "category": "stroke",
             "label": f"Braçada {index + 1} · Atleta #{person_id}",
-            "confidence": safe_confidence,
+            "confidence": heuristic_quality,
+            "confidenceKind": "heuristic_signal_quality",
+            "note": "Qualidade heurística do sinal; não é probabilidade de acerto.",
             "personId": person_id,
         }
         for index, time in enumerate(stroke_times)
     ]
 
 
-def _track_gaps(track: Track, sample_rate: float, min_gap_seconds: float = 0.75) -> list[dict]:
+def _track_gaps(track: Track, sample_rate: float, min_gap_seconds: float = MAX_INTERPOLATION_GAP) -> list[dict]:
     """Intervalos sem amostra do atleta (submersão, oclusão, saída de quadro)."""
     gaps: list[dict] = []
     threshold = max(min_gap_seconds, 3.0 / sample_rate)
     for previous, current in zip(track.history, track.history[1:]):
         gap = current.timestamp - previous.timestamp
-        if gap >= threshold:
+        if gap > threshold:
             gaps.append({"from": round(previous.timestamp, 2), "to": round(current.timestamp, 2)})
     return gaps
 
 
 def _metric_validity(metrics: TrackMetrics, stats: StrokeStats, calibrated: bool) -> dict:
     """Estado de validade por métrica: `measured`, `unavailable` ou `uncalibrated`."""
-    has_cadence = stats.count >= 2 and stats.rate_per_minute > 0
+    has_cadence = len(stats.intervals) >= 2 and stats.rate_per_minute > 0
     distance_state = "measured" if calibrated else "uncalibrated"
     return {
         "strokes": "measured" if stats.count > 0 else "unavailable",
         "strokeRate": "measured" if has_cadence else "unavailable",
-        "rhythmConsistency": "measured" if has_cadence and stats.count >= 3 else "unavailable",
-        "avgSpeed": distance_state if metrics.duration_seconds > 0 else "unavailable",
-        "maxSpeed": distance_state if metrics.duration_seconds > 0 else "unavailable",
-        "distance": distance_state if metrics.duration_seconds > 0 else "unavailable",
+        "rhythmConsistency": "measured" if len(stats.intervals) >= 3 else "unavailable",
+        "avgSpeed": distance_state if metrics.observed_duration_seconds > 0 else "unavailable",
+        "maxSpeed": distance_state if metrics.observed_duration_seconds > 0 else "unavailable",
+        "distance": distance_state if metrics.observed_duration_seconds > 0 else "unavailable",
         "distancePerStroke": distance_state if has_cadence and metrics.distance_per_stroke > 0 else "unavailable",
     }
 
@@ -157,26 +159,33 @@ def _analyze_track(track: Track, calibration: Calibration | None, sample_rate: f
         grid, smooth_x = resample_and_smooth(times, points[:, 0], sample_rate)
         _, smooth_y = resample_and_smooth(times, points[:, 1], sample_rate)
         points = np.stack([smooth_x, smooth_y], axis=1)
-        keep = np.isfinite(points[:, 0]) & np.isfinite(points[:, 1])
-        times, points = grid[keep], points[keep]
+        times = grid
 
-    candidates: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+    max_gap_seconds = max(MAX_INTERPOLATION_GAP, 3.0 / sample_rate)
+    trajectory_segments = split_observed_segments(times, points, max_gap_seconds)
+    candidates: dict[tuple[int, int], list[tuple[np.ndarray, np.ndarray]]] = {}
     for keypoint in CANDIDATE_KEYPOINTS:
         for axis in (0, 1):
             series_times, series_values = _keypoint_series(pose_samples, keypoint, axis)
             if series_times.size >= 8:
                 grid, smoothed = resample_and_smooth(series_times, series_values, sample_rate)
-                finite = np.isfinite(smoothed)
-                if finite.sum() >= 8:
-                    candidates[(keypoint, axis)] = (grid[finite], smoothed[finite])
+                segments = [segment for segment in split_observed_segments(grid, smoothed, max_gap_seconds) if segment[0].size >= 8]
+                if segments:
+                    candidates[(keypoint, axis)] = segments
 
-    signal = select_stroke_signal(candidates)
+    signal = None
+    for key, segments in candidates.items():
+        for segment in segments:
+            candidate = select_stroke_signal({key: segment})
+            if candidate is not None and (signal is None or candidate.score > signal.score):
+                signal = candidate
     stroke_times: list[float] = []
+    stroke_segments: list[list[float]] = []
     stats = StrokeStats(count=0, rate_per_minute=0.0, consistency=0.0, intervals=[])
     if signal is not None:
-        series_times, series_values = candidates[(signal.keypoint, signal.axis)]
-        stroke_times = detect_peaks_hysteresis(series_times, series_values)
-        stats = stroke_statistics(stroke_times)
+        stroke_segments = [detect_peaks_hysteresis(series_times, series_values) for series_times, series_values in candidates[(signal.keypoint, signal.axis)]]
+        stroke_times = sorted(time for segment in stroke_segments for time in segment)
+        stats = stroke_statistics_for_segments(stroke_segments)
 
     span = all_samples[-1].timestamp - all_samples[0].timestamp
     tracked_frames = max(len(all_samples), int(round(span * sample_rate)) + 1)
@@ -187,6 +196,8 @@ def _analyze_track(track: Track, calibration: Calibration | None, sample_rate: f
         stroke_stats=stats,
         tracked_frames=tracked_frames,
         pose_frames=len(pose_samples),
+        distance_per_stroke=distance_per_stroke_from_segments(trajectory_segments, stroke_segments, calibration),
+        max_gap_seconds=max_gap_seconds,
     )
     return {
         "track": track,
@@ -194,6 +205,7 @@ def _analyze_track(track: Track, calibration: Calibration | None, sample_rate: f
         "stats": stats,
         "strokeTimes": [round(float(value), 2) for value in stroke_times],
         "signal": signal.label if signal else None,
+        "signalQuality": signal.score if signal else 0.0,
         "times": times,
         "points": points,
     }
@@ -372,7 +384,7 @@ def analyze_video(
             metrics: TrackMetrics = item["metrics"]
             for alias in track.merged_ids:
                 alias_to_person[alias] = track.track_id
-            events.extend(_stroke_events(track.track_id, item["strokeTimes"], track.mean_confidence))
+            events.extend(_stroke_events(track.track_id, item["strokeTimes"], track.mean_confidence, item["signalQuality"]))
             people.append(
                 {
                     "id": track.track_id,
@@ -380,6 +392,8 @@ def analyze_video(
                     "firstSeen": round(track.history[0].timestamp, 2),
                     "lastSeen": round(track.history[-1].timestamp, 2),
                     "durationSeconds": metrics.duration_seconds,
+                    "observedDurationSeconds": metrics.observed_duration_seconds,
+                    "observedSegments": metrics.observed_segments,
                     "gaps": _track_gaps(track, sample_rate),
                     "strokes": metrics.strokes,
                     "strokeRate": metrics.stroke_rate,

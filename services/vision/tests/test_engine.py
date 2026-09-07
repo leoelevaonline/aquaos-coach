@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.calibration import CalibrationPoint
-from app.engine import KEYFRAME_OUTPUT_CAP, AnalyzeOptions, analyze_video
+from app.engine import KEYFRAME_OUTPUT_CAP, AnalyzeOptions, _track_gaps, analyze_video
 from app.errors import NoPeopleDetected
 from tests.conftest import FakeRefine
 
@@ -17,6 +19,11 @@ SQUARE = [
 ]
 
 AT_10HZ = AnalyzeOptions(target_fps=10.0)
+
+
+def test_gap_contract_uses_same_boundary_as_metric_segmentation():
+    track = SimpleNamespace(history=[SimpleNamespace(timestamp=0.0), SimpleNamespace(timestamp=0.65)])
+    assert _track_gaps(track, sample_rate=10.0) == [{"from": 0.0, "to": 0.65}]
 
 
 def test_single_swimmer_full_contract(video_factory, fake_pose_factory):
