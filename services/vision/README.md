@@ -16,7 +16,17 @@ Desligue com `VISION_REFINEMENT=0` ou `{"refinement": false}` na requisição.
 
 A resposta inclui `keyframes` (pose por atleta a ~6 Hz, no espaço do vídeo
 original, no máximo 600 amostras): a UI interpola e desenha o esqueleto em
-tempo real sincronizado com o player.
+tempo real sincronizado com o player. Fragmentos costurados após submersão
+recebem o ID definitivo do atleta nos keyframes (`people[].idAliases` lista os
+IDs brutos). Quando o vídeo excede o limite de amostras,
+`metadata.keyframesTruncatedAt` informa até que instante há pose sincronizada.
+
+Cada entrada de `people` traz `gaps` (intervalos sem rastreio) e `validity`
+por métrica (`measured`, `unavailable`, `uncalibrated`): cadência e distância
+por braçada só são `measured` com pelo menos dois intervalos válidos;
+velocidade e distância só saem de `uncalibrated` com homografia. Eventos de
+braçada são emitidos por atleta (`events[].personId`); não há eventos de fase
+sintéticos nem índice técnico.
 
 ## Rodar
 

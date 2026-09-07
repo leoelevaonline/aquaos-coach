@@ -16,6 +16,6 @@ for (const target of targets) {
   console.log(`Analisando ${target.filename}...`);
   const analysis = await analyzeVideo(resolve(root, target.filename), resolve(root, target.thumb));
   writeFileSync(resolve(outDir, `${target.id}.json`), JSON.stringify(analysis, null, 2), "utf8");
-  console.log(`-> ${target.id}.json | ciclos: ${analysis.metrics.detectedCycles} | cadência: ${analysis.metrics.estimatedCadence} | índice: ${analysis.metrics.technicalIndex}`);
+  console.log(`-> ${target.id}.json | ciclos: ${analysis.metrics.detectedCycles} | cadência: ${analysis.metrics.estimatedCadence}`);
 }
 console.log("Concluído.");

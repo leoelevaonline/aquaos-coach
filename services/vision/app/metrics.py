@@ -21,7 +21,6 @@ class TrackMetrics:
     mean_motion: float
     peak_motion: float
     steadiness: float
-    technical_index: int
     strokes: int
     stroke_rate: float
     rhythm_consistency: float
@@ -99,12 +98,8 @@ def compute_track_metrics(
         peak_motion = 0.0
         steadiness = 0.0
 
-    if stroke_stats.count >= 2 and stroke_stats.rate_per_minute > 0:
-        technical_index = int(round(0.55 * stroke_stats.consistency + 0.45 * steadiness))
-    else:
-        technical_index = int(round(steadiness))
-
-    distance_per_stroke = round(distance / stroke_stats.count, 2) if stroke_stats.count > 0 else 0.0
+    # Distância por ciclo exige cadência medida (>= 2 intervalos válidos); senão fica 0 e a UI mostra "—".
+    distance_per_stroke = round(distance / stroke_stats.count, 2) if stroke_stats.count >= 2 and stroke_stats.rate_per_minute > 0 else 0.0
     return TrackMetrics(
         duration_seconds=round(duration, 2),
         distance=round(distance, 2),
@@ -113,7 +108,6 @@ def compute_track_metrics(
         mean_motion=round(mean_motion, 1),
         peak_motion=round(peak_motion, 1),
         steadiness=round(steadiness, 1),
-        technical_index=technical_index,
         strokes=stroke_stats.count,
         stroke_rate=round(stroke_stats.rate_per_minute, 1),
         rhythm_consistency=round(stroke_stats.consistency, 1),

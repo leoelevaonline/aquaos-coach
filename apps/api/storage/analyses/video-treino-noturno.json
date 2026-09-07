@@ -1,23 +1,29 @@
 {
   "engine": "AquaMotion",
-  "engineVersion": "1.0-beta",
-  "methodology": "Análise temporal de diferença entre quadros a 8 Hz. Ciclos e fases devem ser validados pelo treinador.",
-  "analyzedAt": "2026-08-29T19:55:25.230Z",
+  "engineVersion": "1.1-beta",
+  "methodology": "Diferença temporal entre quadros a 8 Hz (movimento global da cena). Não identifica atletas nem braçadas; a periodicidade do movimento é um indicador de apoio para revisão, não uma medição de cadência.",
+  "analyzedAt": "2026-09-07T00:40:39.572Z",
   "metadata": {
     "durationSeconds": 24.875,
     "width": 1280,
     "height": 720,
     "fps": 59.94,
     "sizeBytes": 8464955,
-    "bitrate": 2722397
+    "bitrate": 2722397,
+    "persons": 0,
+    "capabilities": {
+      "athletes": false,
+      "strokes": false,
+      "speed": false,
+      "pose": false
+    }
   },
   "metrics": {
     "detectedCycles": 7,
     "estimatedCadence": 41,
     "rhythmConsistency": 58,
     "meanMotion": 49,
-    "peakMotion": 92,
-    "technicalIndex": 72
+    "peakMotion": 92
   },
   "timeline": [
     {
@@ -815,80 +821,52 @@
   ],
   "events": [
     {
-      "id": "phase-entry",
-      "time": 1.99,
-      "category": "entry",
-      "label": "Entrada no campo de análise",
-      "confidence": 93
-    },
-    {
       "id": "motion-1",
       "time": 3.125,
-      "category": "stroke",
-      "label": "Ciclo detectado 1",
+      "category": "motion-peak",
+      "label": "Pico de movimento 1",
       "confidence": 85
     },
     {
       "id": "motion-2",
       "time": 5.25,
-      "category": "stroke",
-      "label": "Ciclo detectado 2",
+      "category": "motion-peak",
+      "label": "Pico de movimento 2",
       "confidence": 81
     },
     {
       "id": "motion-3",
       "time": 5.75,
-      "category": "stroke",
-      "label": "Ciclo detectado 3",
+      "category": "motion-peak",
+      "label": "Pico de movimento 3",
       "confidence": 81
     },
     {
       "id": "motion-4",
       "time": 6.75,
-      "category": "stroke",
-      "label": "Ciclo detectado 4",
+      "category": "motion-peak",
+      "label": "Pico de movimento 4",
       "confidence": 82
-    },
-    {
-      "id": "phase-speed",
-      "time": 8.706,
-      "category": "speed",
-      "label": "Velocidade estabilizada",
-      "confidence": 88
     },
     {
       "id": "motion-5",
       "time": 8.75,
-      "category": "stroke",
-      "label": "Ciclo detectado 5",
+      "category": "motion-peak",
+      "label": "Pico de movimento 5",
       "confidence": 82
-    },
-    {
-      "id": "phase-technique",
-      "time": 15.423,
-      "category": "technique",
-      "label": "Janela técnica principal",
-      "confidence": 91
-    },
-    {
-      "id": "phase-exit",
-      "time": 22.388,
-      "category": "finish",
-      "label": "Saída do campo de análise",
-      "confidence": 90
     },
     {
       "id": "motion-6",
       "time": 22.75,
-      "category": "stroke",
-      "label": "Ciclo detectado 6",
+      "category": "motion-peak",
+      "label": "Pico de movimento 6",
       "confidence": 83
     },
     {
       "id": "motion-7",
       "time": 24.5,
-      "category": "stroke",
-      "label": "Ciclo detectado 7",
+      "category": "motion-peak",
+      "label": "Pico de movimento 7",
       "confidence": 95
     }
   ]

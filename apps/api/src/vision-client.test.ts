@@ -7,7 +7,7 @@ const validAnalysis = {
   methodology: "pose",
   analyzedAt: "2026-09-03T00:00:00.000Z",
   metadata: { durationSeconds: 10, width: 1080, height: 608, fps: 59.94, sizeBytes: 1024, bitrate: 8000 },
-  metrics: { detectedCycles: 10, estimatedCadence: 60, rhythmConsistency: 95, meanMotion: 40, peakMotion: 100, technicalIndex: 91 },
+  metrics: { detectedCycles: 10, estimatedCadence: 60, rhythmConsistency: 95, meanMotion: 40, peakMotion: 100 },
   timeline: [{ time: 0, motion: 10 }],
   events: [{ id: "stroke-1", time: 1, category: "stroke", label: "Braçada 1", confidence: 90 }],
   people: [{ id: 1, strokes: 10 }],

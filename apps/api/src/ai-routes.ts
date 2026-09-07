@@ -203,50 +203,73 @@ REGRAS:
 4. Cite os números e os tempos (em segundos) que sustentam cada afirmação.
 5. Conecte os indicadores à mecânica do nado: cadência vs. distância por braçada, consistência rítmica, variação de velocidade, assimetrias entre atletas.
 6. Prescreva ajustes concretos e priorizados; sem generalidades vazias.
-7. As métricas são apoio objetivo: a decisão final é sempre do treinador humano. Nunca presuma diagnósticos clínicos ou médicos.`;
+7. As métricas são apoio objetivo: a decisão final é sempre do treinador humano. Nunca presuma diagnósticos clínicos ou médicos.
+8. Métrica marcada como "não medido" não existe para você: diga que a plataforma não conseguiu medir e não a substitua por estimativa. Valores em pixels nunca devem ser lidos como metros ou m/s.`;
+
+type MetricValidity = "measured" | "unavailable" | "uncalibrated";
 
 type VisionPersonRecord = {
-  id: number; firstSeen: number; lastSeen: number; durationSeconds: number; strokes: number;
+  id: number; idAliases?: number[]; firstSeen: number; lastSeen: number; durationSeconds: number; strokes: number;
   strokeRate: number; rhythmConsistency: number; avgSpeed: number; maxSpeed: number;
-  distance: number; distancePerStroke: number; technicalIndex: number; meanConfidence: number;
+  distance: number; distancePerStroke: number; units?: string; meanConfidence: number;
   coverage: number; strokeSignal?: string | null; strokeTimes?: number[];
+  gaps?: Array<{ from: number; to: number }>;
+  validity?: Partial<Record<"strokes" | "strokeRate" | "rhythmConsistency" | "avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricValidity>>;
 };
 
 export type VisionAnalysisRecord = {
   engine?: string; engineVersion?: string; methodology?: string;
-  metadata?: { durationSeconds?: number; width?: number; height?: number; fps?: number; units?: string; calibrated?: boolean; persons?: number; sampleFps?: number };
-  metrics?: { detectedCycles?: number; estimatedCadence?: number; rhythmConsistency?: number; meanMotion?: number; peakMotion?: number; technicalIndex?: number };
+  metadata?: { durationSeconds?: number; width?: number; height?: number; fps?: number; units?: string; calibrated?: boolean; persons?: number; primaryPersonId?: number; sampleFps?: number; keyframesTruncatedAt?: number | null };
+  metrics?: { detectedCycles?: number; estimatedCadence?: number; rhythmConsistency?: number; meanMotion?: number; peakMotion?: number };
   timeline?: Array<{ time: number; motion: number }>;
-  events?: Array<{ id: string; time: number; category: string; label: string; confidence: number }>;
+  events?: Array<{ id: string; time: number; category: string; label: string; confidence: number; personId?: number }>;
   people?: VisionPersonRecord[];
   keyframes?: Array<{ t: number; persons: Array<{ id: number; kpts: number[][] }> }>;
 };
 
+const UNMEASURED = "não medido";
+
+/** Valor com estado de validade explícito: a IA nunca recebe zero disfarçado de medição. */
+function measured(person: VisionPersonRecord, key: NonNullable<VisionPersonRecord["validity"]> extends Partial<Record<infer K, MetricValidity>> ? K : never, value: number | string, unit = ""): string {
+  const state = person.validity?.[key];
+  if (state === "unavailable") return UNMEASURED;
+  if (state === "uncalibrated") return `${esc(value)}${unit} (sem calibração: pixels, não metros)`;
+  return `${esc(value)}${unit}`;
+}
+
 function visionHeader(analysis: VisionAnalysisRecord, title: string): string {
   const meta = analysis.metadata ?? {};
-  return [
+  const lines = [
     `VÍDEO: ${esc(title)} · ${esc(meta.durationSeconds ?? 0)} s · ${esc(meta.width)}×${esc(meta.height)} a ${esc(meta.fps)} fps`,
-    `MOTOR: ${esc(analysis.engine)} ${esc(analysis.engineVersion)} · amostragem ${esc(meta.sampleFps)} Hz · ${meta.calibrated ? "calibrado em metros" : `sem calibração (unidades: ${esc(meta.units ?? "px")})`}`,
-  ].join("\n");
+    `MOTOR: ${esc(analysis.engine)} ${esc(analysis.engineVersion)} · amostragem ${esc(meta.sampleFps)} Hz · ${meta.calibrated ? "calibrado em metros" : `sem calibração (unidades: ${esc(meta.units ?? "px")} - velocidades e distâncias NÃO são metros)`}`,
+  ];
+  if (typeof meta.keyframesTruncatedAt === "number") {
+    lines.push(`ATENÇÃO: a pose sincronizada cobre só até ${esc(meta.keyframesTruncatedAt)} s; depois disso não há evidência quadro a quadro.`);
+  }
+  if (analysis.engine === "AquaMotion") {
+    lines.push("LIMITE DO MOTOR: AquaMotion mede apenas movimento global da cena. Não há atletas identificados, braçadas, velocidade ou fases - não afirme nada disso.");
+  }
+  return lines.join("\n");
 }
 
 /** Contexto completo do vídeo: métricas por atleta, timeline de braçadas e perfil de movimento. */
 export function buildVisionCoachContext(analysis: VisionAnalysisRecord, title: string): string {
   const meta = analysis.metadata ?? {};
   const metrics = analysis.metrics ?? {};
-  const sections = [
-    visionHeader(analysis, title),
-    `MÉTRICAS GERAIS: ${esc(metrics.detectedCycles ?? 0)} ciclos detectados · cadência ${esc(metrics.estimatedCadence ?? 0)}/min · consistência rítmica ${esc(metrics.rhythmConsistency ?? 0)}% · índice técnico ${esc(metrics.technicalIndex ?? 0)}/100`,
-  ];
+  const sections = [visionHeader(analysis, title)];
   const people = analysis.people ?? [];
   if (people.length) {
+    const primary = meta.primaryPersonId ?? people[0]?.id;
+    sections.push(`MÉTRICAS DO ATLETA PRINCIPAL (#${esc(primary)}): ${esc(metrics.detectedCycles ?? 0)} braçadas · cadência ${metrics.estimatedCadence ? `${esc(metrics.estimatedCadence)}/min` : UNMEASURED} · consistência rítmica ${metrics.estimatedCadence ? `${esc(metrics.rhythmConsistency ?? 0)}%` : UNMEASURED}`);
     sections.push(`ATLETAS RASTREADOS (${people.length}):\n${people.slice(0, 6).map((person) => {
       const strokeTimes = (person.strokeTimes ?? []).slice(0, 60);
       const extra = (person.strokeTimes ?? []).length > 60 ? " …" : "";
+      const units = person.units ?? meta.units ?? "px";
+      const gaps = person.gaps ?? [];
       return [
-        `- Atleta #${person.id}: presente de ${esc(person.firstSeen)} s a ${esc(person.lastSeen)} s (${esc(person.durationSeconds)} s rastreados)`,
-        `  braçadas ${esc(person.strokes)} · cadência ${esc(person.strokeRate)}/min · consistência ${esc(person.rhythmConsistency)}% · metros por braçada ${esc(person.distancePerStroke)}`,
-        `  velocidade média ${esc(person.avgSpeed)} · pico ${esc(person.maxSpeed)} ${esc(meta.units ?? "px")}/s · distância ${esc(person.distance)} · índice técnico ${esc(person.technicalIndex)}/100`,
+        `- Atleta #${person.id}: presente de ${esc(person.firstSeen)} s a ${esc(person.lastSeen)} s (${esc(person.durationSeconds)} s rastreados)${gaps.length ? ` · ${gaps.length} lacuna(s) sem rastreio: ${gaps.slice(0, 8).map((gap) => `${esc(gap.from)}-${esc(gap.to)}s`).join(", ")}` : ""}`,
+        `  braçadas ${measured(person, "strokes", person.strokes)} · cadência ${measured(person, "strokeRate", person.strokeRate, "/min")} · consistência ${measured(person, "rhythmConsistency", person.rhythmConsistency, "%")} · distância por braçada ${measured(person, "distancePerStroke", person.distancePerStroke, ` ${units}`)}`,
+        `  velocidade média ${measured(person, "avgSpeed", person.avgSpeed, ` ${units}/s`)} · pico ${measured(person, "maxSpeed", person.maxSpeed, ` ${units}/s`)} · distância ${measured(person, "distance", person.distance, ` ${units}`)}`,
         `  confiança média ${esc(Math.round(person.meanConfidence * 100))}% · cobertura de pose ${esc(person.coverage)}%${person.strokeSignal ? ` · sinal de braçada: ${esc(person.strokeSignal)}` : ""}`,
         strokeTimes.length ? `  braçadas em: ${strokeTimes.map((time) => `${esc(time)}s`).join(", ")}${extra}` : "  sem ciclos completos detectados (janela rastreável curta ou atleta submerso)",
       ].join("\n");
@@ -267,7 +290,7 @@ export function buildVisionCoachContext(analysis: VisionAnalysisRecord, title: s
   }
   const strokes = (analysis.events ?? []).filter((event) => event.category === "stroke");
   if (strokes.length) {
-    sections.push(`EVENTOS DE BRAÇADA (${strokes.length}): ${strokes.slice(0, 40).map((event) => `${event.time.toFixed(1)}s`).join(", ")}${strokes.length > 40 ? " …" : ""}`);
+    sections.push(`EVENTOS DE BRAÇADA (${strokes.length}): ${strokes.slice(0, 40).map((event) => `${event.time.toFixed(1)}s${typeof event.personId === "number" ? ` (#${event.personId})` : ""}`).join(", ")}${strokes.length > 40 ? " …" : ""}`);
   }
   return sections.join("\n\n");
 }
@@ -276,7 +299,9 @@ export function buildVisionCoachContext(analysis: VisionAnalysisRecord, title: s
 export function buildLiveWindowContext(analysis: VisionAnalysisRecord, currentTime: number, windowSeconds = 4): string {
   const meta = analysis.metadata ?? {};
   const from = Math.max(0, currentTime - windowSeconds);
-  const to = currentTime + 1;
+  // A janela termina no instante atual: comentar o que ainda não aconteceu
+  // no player deixava o comentário fora de sincronia com o vídeo.
+  const to = currentTime;
   const frames = (analysis.keyframes ?? []).filter((frame) => frame.t >= from && frame.t <= to);
   const presence = new Map<number, { frames: number; lastSeen: number; confidence: number; x0: number; x1: number; y0: number; y1: number }>();
   for (const frame of frames) {
@@ -295,11 +320,13 @@ export function buildLiveWindowContext(analysis: VisionAnalysisRecord, currentTi
     }
   }
   const sections = [visionHeader(analysis, "treino"), `INSTANTE ATUAL: t = ${currentTime.toFixed(1)} s (janela de análise: ${from.toFixed(1)} s a ${to.toFixed(1)} s)`];
-  if (presence.size) {
+  if (typeof meta.keyframesTruncatedAt === "number" && from > meta.keyframesTruncatedAt) {
+    sections.push("ATLETAS NO QUADRO AGORA: sem evidência - a pose sincronizada não cobre este trecho do vídeo.");
+  } else if (presence.size) {
     const lines = [...presence.entries()].map(([id, entry]) => {
       const span = Math.max(0.1, entry.lastSeen - from);
       const speed = Math.hypot(entry.x1 - entry.x0, entry.y1 - entry.y0) / span;
-      return `- Atleta #${id}: no quadro em ${entry.frames} amostras · confiança média do nariz ${Math.round((entry.confidence / entry.frames) * 100)}% · deslocamento estimado ${speed.toFixed(1)} ${esc(meta.units ?? "px")}/s`;
+      return `- Atleta #${id}: no quadro em ${entry.frames} amostras · confiança média do nariz ${Math.round((entry.confidence / entry.frames) * 100)}% · deslocamento estimado ${speed.toFixed(1)} px/s (medido em pixels da imagem, não em metros)`;
     });
     sections.push(`ATLETAS NO QUADRO AGORA:\n${lines.join("\n")}`);
   } else {
@@ -307,7 +334,7 @@ export function buildLiveWindowContext(analysis: VisionAnalysisRecord, currentTi
   }
   const strokes = (analysis.events ?? []).filter((event) => event.category === "stroke" && event.time >= from && event.time <= to);
   sections.push(strokes.length
-    ? `BRAÇADAS NESTA JANELA: ${strokes.map((event) => `${event.time.toFixed(1)}s`).join(", ")}`
+    ? `BRAÇADAS NESTA JANELA: ${strokes.map((event) => `${event.time.toFixed(1)}s${typeof event.personId === "number" ? ` (#${event.personId})` : ""}`).join(", ")}`
     : "BRAÇADAS NESTA JANELA: nenhuma detectada.");
   const timeline = analysis.timeline ?? [];
   const near = timeline.filter((item) => item.time >= from && item.time <= to);
@@ -316,7 +343,7 @@ export function buildLiveWindowContext(analysis: VisionAnalysisRecord, currentTi
   }
   const people = analysis.people ?? [];
   if (people.length) {
-    sections.push(`MÉTRICAS GLOBAIS POR ATLETA (vídeo inteiro):\n${people.slice(0, 6).map((person) => `- Atleta #${person.id}: ${person.strokes} braçadas · ${person.strokeRate}/min · ${person.avgSpeed} ${esc(meta.units ?? "px")}/s · índice técnico ${person.technicalIndex}/100`).join("\n")}`);
+    sections.push(`MÉTRICAS GLOBAIS POR ATLETA (vídeo inteiro):\n${people.slice(0, 6).map((person) => `- Atleta #${person.id}: ${measured(person, "strokes", person.strokes)} braçadas · cadência ${measured(person, "strokeRate", person.strokeRate, "/min")} · velocidade média ${measured(person, "avgSpeed", person.avgSpeed, ` ${person.units ?? meta.units ?? "px"}/s`)}`).join("\n")}`);
   }
   return sections.join("\n\n");
 }

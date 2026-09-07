@@ -122,6 +122,9 @@ class Track:
         # track morre, e o arquivamento em `finished` precisa saber que ele
         # já teve identidade estabelecida.
         self.established = False
+        # IDs de fragmentos costurados neste track: os keyframes ainda os
+        # carregam, e o player precisa mapeá-los para uma identidade única.
+        self.merged_ids: list[int] = []
         self.history: list[TrackSample] = [
             TrackSample(frame_index, timestamp, detection.bbox.copy(), detection.keypoints.copy(), detection.keypoint_scores.copy(), detection.score, self._has_pose(detection))
         ]
@@ -298,4 +301,5 @@ def stitch_tracks(tracks: list[Track], *, max_gap: float = 5.0, radius_factor: f
             merged.append(track)
         else:
             target.history.extend(track.history)
+            target.merged_ids.extend([track.track_id, *track.merged_ids])
     return merged

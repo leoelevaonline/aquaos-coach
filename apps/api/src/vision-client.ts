@@ -17,12 +17,15 @@ export type VisionAnalysis = {
     units?: string;
     calibrated?: boolean;
     persons?: number;
+    primaryPersonId?: number;
     sampleFps?: number;
+    keyframesTruncatedAt?: number | null;
   };
-  metrics: { detectedCycles: number; estimatedCadence: number; rhythmConsistency: number; meanMotion: number; peakMotion: number; technicalIndex: number };
+  metrics: { detectedCycles: number; estimatedCadence: number; rhythmConsistency: number; meanMotion: number; peakMotion: number };
   timeline: { time: number; motion: number }[];
-  events: { id: string; time: number; category: string; label: string; confidence: number; note?: string }[];
+  events: { id: string; time: number; category: string; label: string; confidence: number; note?: string; personId?: number }[];
   people?: Array<Record<string, unknown>>;
+  keyframes?: Array<{ t: number; persons: Array<{ id: number; kpts: number[][] }> }>;
 };
 
 export type VisionStage = (progress: number, stage: string) => void;

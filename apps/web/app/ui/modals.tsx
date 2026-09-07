@@ -11,7 +11,7 @@ import { Avatar, ModalShell } from "./components";
 import { apiRequest, mediaUrl, subscribeToLiveEvents, uploadFile } from "./api";
 import type { WorkoutSeed } from "./workout-library-actions";
 import { LiveAnalysis, PoseTrackingLayer } from "./pose/LiveAnalysis";
-import { TRACK_COLORS, type TrackedKeyframe } from "./pose/server-track";
+import { trackColor, type TrackedKeyframe } from "./pose/server-track";
 import { VisionCoachPanel } from "./vision-coach";
 
 type SyncProvider = "garmin" | "polar" | "apple";
@@ -142,11 +142,14 @@ export function InviteModal({ onClose, onSave }: { onClose: () => void; onSave: 
   return <ModalShell title="Convidar atleta" subtitle="Crie acesso individual e defina o grupo inicial" onClose={onClose}>{invitationUrl ? <><div className="invite-success"><CircleCheck size={30} /><h3>Convite criado</h3><p>Envie este link ao atleta. Ele expira em 7 dias e só pode ser utilizado uma vez.</p><div className="copy-field"><input readOnly value={invitationUrl} aria-label="Link do convite" /><button onClick={() => void copyInvitation()}>{copied ? "Copiado" : "Copiar"}</button></div></div><footer className="modal-footer"><button className="primary-button" onClick={() => { onSave(invitationUrl); onClose(); }}>Concluir</button></footer></> : <><div className="modal-form"><label><span>Nome completo</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome do atleta" /></label><label><span>E-mail</span><input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="atleta@email.com" /></label><label><span>Grupo</span><select value={group} onChange={(event) => setGroup(event.target.value)}><option>Elite · Raia 4</option><option>Desenvolvimento · Raia 3</option><option>Base · Raia 2</option><option>Águas abertas</option></select></label><div className="secure-note"><ShieldCheck size={18} /><p>O convite expira em 7 dias e pode ser revogado. O consentimento de dados de saúde é solicitado separadamente.</p></div>{error && <p className="modal-error" role="alert">{error}</p>}</div><footer className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={saving || !name || !email} onClick={() => void save()}><Send size={16} />{saving ? "Criando…" : "Criar convite"}</button></footer></>}</ModalShell>;
 }
 
+type MetricValidity = "measured" | "unavailable" | "uncalibrated";
 type VisionPerson = {
   id: number;
+  idAliases?: number[];
   firstSeen: number;
   lastSeen: number;
   durationSeconds: number;
+  gaps?: Array<{ from: number; to: number }>;
   strokes: number;
   strokeRate: number;
   rhythmConsistency: number;
@@ -154,24 +157,45 @@ type VisionPerson = {
   maxSpeed: number;
   distance: number;
   distancePerStroke: number;
-  technicalIndex: number;
+  units?: string;
+  validity?: Partial<Record<"strokes" | "strokeRate" | "rhythmConsistency" | "avgSpeed" | "maxSpeed" | "distance" | "distancePerStroke", MetricValidity>>;
   meanConfidence: number;
   coverage: number;
   strokeSignal?: string | null;
+  strokeTimes?: number[];
 };
 type MotionAnalysis = {
   engine: string;
   engineVersion: string;
   methodology: string;
-  metadata: { durationSeconds: number; width: number; height: number; fps: number; sizeBytes: number; bitrate: number; units?: string; calibrated?: boolean; persons?: number };
-  metrics: { detectedCycles: number; estimatedCadence: number; rhythmConsistency: number; meanMotion: number; peakMotion: number; technicalIndex: number };
+  metadata: { durationSeconds: number; width: number; height: number; fps: number; sizeBytes: number; bitrate: number; units?: string; calibrated?: boolean; persons?: number; primaryPersonId?: number; keyframesTruncatedAt?: number | null; capabilities?: { athletes?: boolean; strokes?: boolean; speed?: boolean; pose?: boolean } };
+  metrics: { detectedCycles: number; estimatedCadence: number; rhythmConsistency: number; meanMotion: number; peakMotion: number };
   timeline: { time: number; motion: number }[];
-  events: { id: string; time: number; category: string; label: string; confidence: number; note?: string }[];
+  events: { id: string; time: number; category: string; label: string; confidence: number; note?: string; personId?: number }[];
   people?: VisionPerson[];
   keyframes?: TrackedKeyframe[];
 };
 type ManagedVideo = { id: string; title?: string; athlete?: string; event?: string; url?: string; thumbnailUrl?: string; durationSeconds?: number; analysisStatus?: string; analysisProgress?: number; analysisStage?: string; analysisError?: string; analysisJobId?: string; analysis?: MotionAnalysis; manualEvents?: MotionAnalysis["events"] };
 const clock = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${Math.floor(seconds % 60).toString().padStart(2, "0")}.${Math.floor((seconds % 1) * 10)}`;
+
+/**
+ * Valor de métrica com estado explícito: "—" quando não foi medido, sufixo
+ * "px" quando não há calibração. Nunca mostra zero como se fosse medição.
+ */
+export function metricDisplay(person: VisionPerson, key: keyof NonNullable<VisionPerson["validity"]>, value: number, unit = ""): { value: string; note: string | null } {
+  const state = person.validity?.[key] ?? (value > 0 ? "measured" : "unavailable");
+  if (state === "unavailable") return { value: "—", note: "não medido" };
+  const units = person.units ?? "px";
+  const rendered = `${value}${unit.replace("{u}", units)}`;
+  return { value: rendered, note: state === "uncalibrated" ? "sem calibração" : null };
+}
+
+/** Rótulo curto do evento na linha do tempo, com o atleta quando houver. */
+export function eventGlyph(event: MotionAnalysis["events"][number]): string {
+  if (event.category === "stroke") return "B";
+  if (event.category === "motion-peak") return "M";
+  return event.label[0] ?? "•";
+}
 
 export function VideoReview({ videoId, onClose, onSave }: { videoId: string; onClose: () => void; onSave: () => void }) {
   const fallback = videos.find((item) => item.id === videoId) ?? videos[0];
@@ -184,6 +208,7 @@ export function VideoReview({ videoId, onClose, onSave }: { videoId: string; onC
   const [saveError, setSaveError] = useState("");
   const [processing, setProcessing] = useState(true);
   const [poseEnabled, setPoseEnabled] = useState(false);
+  const [selectedPerson, setSelectedPerson] = useState<number | null>(null);
   const markers = ["Entrada", "Velocidade", "Virada", "Ritmo", "Chegada"];
   const applyRemote = (remote: ManagedVideo) => {
     setRecord(remote);
@@ -213,15 +238,24 @@ export function VideoReview({ videoId, onClose, onSave }: { videoId: string; onC
     else void refresh().catch(() => undefined);
   }), [videoId]);
   const analysis = record.analysis;
+  const people = analysis?.people ?? [];
+  const personIds = people.map((person) => person.id);
+  const tracksAthletes = analysis ? analysis.metadata.capabilities?.athletes !== false && people.length > 0 : false;
+  const focus = people.find((person) => person.id === selectedPerson) ?? people.find((person) => person.id === analysis?.metadata.primaryPersonId) ?? people[0];
   const sample = analysis?.timeline.reduce((best, item) => Math.abs(item.time - currentTime) < Math.abs(best.time - currentTime) ? item : best, analysis.timeline[0] ?? { time: 0, motion: 0 });
-  const allEvents = [...(analysis?.events ?? []), ...(record.manualEvents ?? [])].sort((a, b) => a.time - b.time);
-  const activeEvent = [...allEvents].reverse().find((event) => event.time <= currentTime + .25);
-  const detectedNow = allEvents.filter((event) => event.category === "stroke" && event.time <= currentTime).length;
-  const liveCadence = analysis ? Math.max(0, Math.round(analysis.metrics.estimatedCadence + ((sample?.motion ?? analysis.metrics.meanMotion) - analysis.metrics.meanMotion) * .22)) : 0;
+  const automaticEvents = (analysis?.events ?? []).filter((event) => selectedPerson === null || event.personId === undefined || event.personId === selectedPerson);
+  const allEvents = [...automaticEvents, ...(record.manualEvents ?? [])].sort((a, b) => a.time - b.time);
+  const activeEvent = [...allEvents].reverse().find((event) => event.time <= currentTime && currentTime - event.time < .6);
+  const focusStrokes = focus?.strokeTimes ?? [];
+  const strokesSoFar = focusStrokes.filter((time) => time <= currentTime).length;
+  const inGap = focus?.gaps?.find((gap) => currentTime >= gap.from && currentTime <= gap.to) ?? null;
+  const focusVisible = focus ? currentTime >= focus.firstSeen - .25 && currentTime <= focus.lastSeen + .25 && !inGap : false;
+  const coverageEndsAt = analysis?.metadata.keyframesTruncatedAt ?? null;
+  const phaseLabel = activeEvent?.label ?? (inGap && focus ? `Atleta #${focus.id} sem rastreio (${clock(inGap.from)}–${clock(inGap.to)})` : analysis && !tracksAthletes ? "Sem identificação de atletas" : "");
   const toggle = async () => { if (!player.current) return; if (player.current.paused) await player.current.play(); else player.current.pause(); };
   const seek = (time: number) => { if (player.current) player.current.currentTime = time; setCurrentTime(time); };
   const addMarker = async (label: string, index: number) => {
-    const body = { time: currentTime, category: label.toLowerCase(), label: `${label} · validação do treinador` };
+    const body = { time: currentTime, category: label.toLowerCase(), label: `${label} · validação do treinador`, ...(focus ? { personId: focus.id } : {}) };
     try { const updated = await apiRequest<ManagedVideo>(`/api/v1/videos/${videoId}/events`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); setRecord(updated); } catch { setRecord((value) => ({ ...value, manualEvents: [...(value.manualEvents ?? []), { id: `local-${Date.now()}`, ...body, confidence: 100 }] })); }
   };
   const save = async () => {
@@ -233,17 +267,32 @@ export function VideoReview({ videoId, onClose, onSave }: { videoId: string; onC
       setSaveError(cause instanceof Error ? cause.message : "Não foi possível salvar a revisão.");
     }
   };
+  const cadence = focus ? metricDisplay(focus, "strokeRate", focus.strokeRate, "/min") : null;
+  const consistency = focus ? metricDisplay(focus, "rhythmConsistency", focus.rhythmConsistency, "%") : null;
+  const speed = focus ? metricDisplay(focus, "avgSpeed", focus.avgSpeed, " {u}/s") : null;
+  const perStroke = focus ? metricDisplay(focus, "distancePerStroke", focus.distancePerStroke, " {u}") : null;
+  const engineNote = analysis
+    ? tracksAthletes
+      ? `${people.length} ${people.length === 1 ? "atleta rastreado" : "atletas rastreados"}${analysis.metadata.calibrated ? " · calibrado em metros" : " · sem calibração: distâncias em pixels"}${coverageEndsAt !== null ? ` · pose sincronizada até ${coverageEndsAt.toFixed(0)} s` : ""}`
+      : "Este motor mede apenas o movimento global da cena: não identifica atletas, braçadas nem velocidade."
+    : "";
   return <ModalShell title={`${record.athlete ?? fallback.athlete} · ${record.event ?? record.title ?? fallback.event}`} subtitle={`Análise sincronizada · ${analysis?.engine ?? "AquaMotion"} ${analysis?.engineVersion ?? ""}`} onClose={onClose} wide>
-     <div className="live-analysis-banner"><span className={processing ? "processing" : record.analysisStatus === "failed" ? "failed" : "live"}><i />{processing ? `PROCESSANDO VÍDEO · ${record.analysisProgress ?? 0}%` : record.analysisStatus === "failed" ? "ANÁLISE INTERROMPIDA" : "ANÁLISE ATIVA"}</span><p>{record.analysisStage ?? analysis?.methodology ?? "Carregando metadados e curva de movimento…"}</p><em>{analysis ? `${analysis.metadata.width}×${analysis.metadata.height} · ${analysis.metadata.fps} fps` : record.analysisError ?? ""}</em></div>
-    <div className="review-layout real-review"><div><div className="review-player"><div className="real-video-stage"><video ref={player} src={mediaUrl(record.url)} poster={mediaUrl(record.thumbnailUrl)} playsInline preload="metadata" onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} /><button type="button" className={`pose-toggle ${poseEnabled ? "active" : ""}`} onClick={() => setPoseEnabled((value) => !value)} aria-pressed={poseEnabled} title={analysis?.keyframes?.length ? "Rastreamento AquaVision do servidor, sincronizado com a reprodução" : "Rastreamento de pose em tempo real no navegador"}><Sparkles size={15} />IA{analysis?.keyframes?.length ? " · servidor" : ""}</button>{poseEnabled && <PoseTrackingLayer videoRef={player} active serverKeyframes={analysis?.keyframes} serverPeopleCount={analysis?.people?.length ?? 0} />}<button className="video-play-control" onClick={() => void toggle()}>{playing ? <Pause size={23} fill="currentColor" /> : <Play size={23} fill="currentColor" />}</button><span className="player-time">{clock(currentTime)} / {clock(duration)}</span><span className="active-phase">{activeEvent?.label ?? "Aguardando fase técnica"}</span></div><div className="timeline live-timeline" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); seek(((event.clientX - rect.left) / rect.width) * duration); }}><i style={{ width: `${duration ? currentTime / duration * 100 : 0}%` }} />{allEvents.map((event, index) => <em key={event.id} title={`${event.label} · ${clock(event.time)}`} style={{ left: `${duration ? event.time / duration * 100 : 0}%`, background: zoneDistribution[index % zoneDistribution.length].color }} />)}</div></div>
-      <div className="live-metrics"><div><span>MOVIMENTO AGORA</span><b>{sample?.motion ?? 0}<small>/100</small></b><i style={{ width: `${sample?.motion ?? 0}%` }} /></div><div><span>CADÊNCIA ESTIMADA</span><b>{liveCadence}<small> ciclos/min</small></b><em>{analysis ? "janela temporal" : "-"}</em></div><div><span>CICLOS DETECTADOS</span><b>{detectedNow}<small> / {analysis?.metrics.detectedCycles ?? 0}</small></b><em>até este quadro</em></div><div><span>ÍNDICE TÉCNICO</span><b>{analysis?.metrics.technicalIndex ?? 0}<small>/100</small></b><em>{analysis?.metrics.rhythmConsistency ?? 0}% consistência</em></div></div>
+     <div className="live-analysis-banner"><span className={processing ? "processing" : record.analysisStatus === "failed" ? "failed" : "live"}><i />{processing ? `PROCESSANDO VÍDEO · ${record.analysisProgress ?? 0}%` : record.analysisStatus === "failed" ? "ANÁLISE INTERROMPIDA" : "ANÁLISE ATIVA"}</span><p>{processing ? record.analysisStage ?? "Aguardando processamento" : engineNote || record.analysisError || "Carregando metadados e curva de movimento…"}</p><em>{analysis ? `${analysis.metadata.width}×${analysis.metadata.height} · ${analysis.metadata.fps} fps` : ""}</em></div>
+    <div className="review-layout real-review"><div><div className="review-player"><div className="real-video-stage"><video ref={player} src={mediaUrl(record.url)} poster={mediaUrl(record.thumbnailUrl)} playsInline preload="metadata" onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} /><button type="button" className={`pose-toggle ${poseEnabled ? "active" : ""}`} onClick={() => setPoseEnabled((value) => !value)} aria-pressed={poseEnabled} title={analysis?.keyframes?.length ? "Rastreamento AquaVision do servidor, sincronizado com a reprodução" : "Rastreamento de pose em tempo real no navegador"}><Sparkles size={15} />IA{analysis?.keyframes?.length ? " · servidor" : ""}</button>{poseEnabled && <PoseTrackingLayer videoRef={player} active serverKeyframes={analysis?.keyframes} serverPersonIds={personIds} selectedPersonId={selectedPerson} coverageEndsAt={coverageEndsAt} />}<button className="video-play-control" onClick={() => void toggle()}>{playing ? <Pause size={23} fill="currentColor" /> : <Play size={23} fill="currentColor" />}</button><span className="player-time">{clock(currentTime)} / {clock(duration)}</span>{phaseLabel ? <span className="active-phase">{phaseLabel}</span> : null}</div><div className="timeline live-timeline" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); seek(((event.clientX - rect.left) / rect.width) * duration); }}><i style={{ width: `${duration ? currentTime / duration * 100 : 0}%` }} />{focus?.gaps?.map((gap) => <s key={`${gap.from}-${gap.to}`} className="timeline-gap" title={`Sem rastreio ${clock(gap.from)}–${clock(gap.to)}`} style={{ left: `${duration ? gap.from / duration * 100 : 0}%`, width: `${duration ? (gap.to - gap.from) / duration * 100 : 0}%` }} />)}{allEvents.map((event) => <em key={event.id} title={`${event.label} · ${clock(event.time)}`} style={{ left: `${duration ? event.time / duration * 100 : 0}%`, background: typeof event.personId === "number" ? trackColor(event.personId, personIds) : zoneDistribution[4].color }} />)}</div></div>
+      {tracksAthletes && people.length > 1 ? <div className="athlete-selector" role="tablist" aria-label="Atleta em foco"><button type="button" role="tab" aria-selected={selectedPerson === null} className={selectedPerson === null ? "active" : ""} onClick={() => setSelectedPerson(null)}>Todos</button>{people.map((person) => <button type="button" role="tab" key={person.id} aria-selected={selectedPerson === person.id} className={selectedPerson === person.id ? "active" : ""} onClick={() => setSelectedPerson(person.id)}><span className="tracked-athlete-dot" style={{ background: trackColor(person.id, personIds) }} />Atleta #{person.id}</button>)}</div> : null}
+      {tracksAthletes && focus ? <div className="live-metrics" data-person={focus.id}><div><span>ATLETA #{focus.id}{selectedPerson === null && people.length > 1 ? " · PRINCIPAL" : ""}</span><b>{focusVisible ? "no quadro" : inGap ? "sem rastreio" : "fora do quadro"}</b><em>{Math.round(focus.meanConfidence * 100)}% conf · {focus.coverage}% cobertura</em></div><div><span>BRAÇADAS</span><b>{strokesSoFar}<small> / {focus.strokes}</small></b><em>até este quadro</em></div><div><span>CADÊNCIA</span><b>{cadence?.value}</b><em>{cadence?.note ?? `consistência ${consistency?.value}`}</em></div><div><span>VELOCIDADE MÉDIA</span><b>{speed?.value}</b><em>{speed?.note ?? (perStroke && perStroke.note === null ? `${perStroke.value} por braçada` : "distância por braçada não medida")}</em></div></div>
+      : analysis ? <div className="live-metrics"><div><span>MOVIMENTO AGORA</span><b>{sample?.motion ?? 0}<small>/100</small></b><i style={{ width: `${sample?.motion ?? 0}%` }} /></div><div><span>PICOS DE MOVIMENTO</span><b>{allEvents.filter((event) => event.category === "motion-peak" && event.time <= currentTime).length}<small> / {analysis.metrics.detectedCycles}</small></b><em>movimento global da cena</em></div><div><span>ATLETAS</span><b>—</b><em>não identificados por este motor</em></div><div><span>CADÊNCIA</span><b>—</b><em>não medida</em></div></div> : null}
       <div className="marker-buttons">{markers.map((marker, index) => <button key={marker} onClick={() => void addMarker(marker, index)}><span style={{ background: zoneDistribution[index].color }}>{marker[0]}</span>{marker}<Plus size={14} /></button>)}</div>
       <VisionCoachPanel videoId={videoId} hasAnalysis={Boolean(analysis)} playing={playing} currentTime={currentTime} seek={seek} engine={analysis?.engine} />
       <label className="review-note"><span>Feedback para o atleta</span><textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="Registre a evidência técnica e a próxima ação…" /></label></div>
       <aside className="review-sidebar">
-        {analysis?.people?.length ? <div className="tracked-athletes"><span className="eyebrow">ATLETAS RASTREADOS · {analysis.people.length}</span>{analysis.people.slice(0, 6).map((person, index) => <div className="tracked-athlete-row" key={person.id}><span className="tracked-athlete-dot" style={{ background: TRACK_COLORS[index % TRACK_COLORS.length] }} /><div><b>Atleta #{person.id}</b><small>{person.strokes} braçadas · {person.strokeRate || 0}/min · {person.avgSpeed} {analysis.metadata.units ?? "px"}/s</small></div><em>{Math.round(person.meanConfidence * 100)}% conf · {person.coverage}% cob</em></div>)}</div> : null}
-        <span className="eyebrow">LINHA DO TEMPO · {allEvents.length} EVENTOS</span>{allEvents.slice(0, 14).map((event, index) => <button className={`analysis-event ${Math.abs(event.time - currentTime) < .5 ? "active" : ""}`} key={event.id} onClick={() => seek(event.time)}><span style={{ background: zoneDistribution[index % zoneDistribution.length].color }}>{event.category === "stroke" ? "C" : event.label[0]}</span><div><b>{event.label}</b><small>{clock(event.time)} · {event.confidence}% confiança</small><p>{event.category === "stroke" ? "Pico de movimento detectado no ciclo." : "Fase sugerida para validação técnica."}</p></div></button>)}</aside></div>
-     {saveError && <p className="modal-error review-save-error" role="alert">{saveError}</p>}<footer className="modal-footer"><div className="analysis-summary"><Sparkles size={15} /><span><b>{analysis?.metrics.detectedCycles ?? 0} ciclos</b> · cadência {analysis?.metrics.estimatedCadence ?? 0}/min · consistência {analysis?.metrics.rhythmConsistency ?? 0}%{analysis ? ` · motor ${analysis.engine}` : ""}</span></div><button className="secondary-button" onClick={onClose}>Fechar</button><button className="primary-button" onClick={() => void save()}><Check size={16} />Salvar revisão</button></footer>
+        {tracksAthletes ? <div className="tracked-athletes"><span className="eyebrow">ATLETAS RASTREADOS · {people.length}</span>{people.slice(0, 6).map((person) => {
+          const rate = metricDisplay(person, "strokeRate", person.strokeRate, "/min");
+          const avg = metricDisplay(person, "avgSpeed", person.avgSpeed, " {u}/s");
+          return <button type="button" className={`tracked-athlete-row ${selectedPerson === person.id ? "active" : ""}`} key={person.id} onClick={() => setSelectedPerson(selectedPerson === person.id ? null : person.id)}><span className="tracked-athlete-dot" style={{ background: trackColor(person.id, personIds) }} /><div><b>Atleta #{person.id}</b><small>{clock(person.firstSeen)}–{clock(person.lastSeen)} · {person.strokes} braçadas · {rate.value} · {avg.value}{avg.note ? ` (${avg.note})` : ""}</small></div><em>{person.gaps?.length ? `${person.gaps.length} lacuna${person.gaps.length > 1 ? "s" : ""}` : "contínuo"}</em></button>;
+        })}</div> : null}
+        <span className="eyebrow">LINHA DO TEMPO · {allEvents.length} EVENTOS</span>{allEvents.slice(0, 14).map((event) => <button className={`analysis-event ${Math.abs(event.time - currentTime) < .5 ? "active" : ""}`} key={event.id} onClick={() => seek(event.time)}><span style={{ background: typeof event.personId === "number" ? trackColor(event.personId, personIds) : zoneDistribution[4].color }}>{eventGlyph(event)}</span><div><b>{event.label}</b><small>{clock(event.time)} · {event.confidence}% confiança</small><p>{event.category === "stroke" ? "Pico periódico do keypoint de braçada." : event.category === "motion-peak" ? "Pico de movimento global da cena (não é braçada)." : "Marcação do treinador."}</p></div></button>)}</aside></div>
+     {saveError && <p className="modal-error review-save-error" role="alert">{saveError}</p>}<footer className="modal-footer"><div className="analysis-summary"><Sparkles size={15} /><span>{analysis ? tracksAthletes && focus ? <><b>Atleta #{focus.id}: {focus.strokes} braçadas</b> · cadência {cadence?.value} · consistência {consistency?.value} · motor {analysis.engine}</> : <><b>{analysis.metrics.detectedCycles} picos de movimento</b> · sem identificação de atletas · motor {analysis.engine}</> : "Sem análise"}</span></div><button className="secondary-button" onClick={onClose}>Fechar</button><button className="primary-button" onClick={() => void save()}><Check size={16} />Salvar revisão</button></footer>
   </ModalShell>;
 }
 

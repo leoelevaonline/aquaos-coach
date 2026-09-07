@@ -34,14 +34,22 @@ def test_single_swimmer_full_contract(video_factory, fake_pose_factory):
     assert 8 <= metrics["detectedCycles"] <= 12
     assert metrics["estimatedCadence"] == pytest.approx(60, abs=6)
     assert metrics["rhythmConsistency"] > 80
-    assert 0 <= metrics["technicalIndex"] <= 100
+    assert "technicalIndex" not in metrics, "índice técnico sem validação não pode ser publicado"
 
     assert analysis["timeline"], "timeline não pode ser vazia"
     assert all(0 <= sample["motion"] <= 100 for sample in analysis["timeline"])
     categories = {event["category"] for event in analysis["events"]}
-    assert "stroke" in categories
-    assert {"entry", "finish"} <= categories
+    assert categories == {"stroke"}, "nenhum evento artificial de fase"
+    assert all(event["personId"] == analysis["people"][0]["id"] for event in analysis["events"])
     assert analysis["events"] == sorted(analysis["events"], key=lambda event: event["time"])
+
+    person = analysis["people"][0]
+    assert person["units"] == "px"
+    assert person["gaps"] == []
+    assert person["validity"]["strokeRate"] == "measured"
+    assert person["validity"]["distance"] == "uncalibrated"
+    assert analysis["metadata"]["primaryPersonId"] == person["id"]
+    assert analysis["metadata"]["keyframesTruncatedAt"] is None
 
 
 def test_hidden_swimmer_keeps_single_track(video_factory, fake_pose_factory):
@@ -51,6 +59,13 @@ def test_hidden_swimmer_keeps_single_track(video_factory, fake_pose_factory):
     assert len(analysis["people"]) == 1
     assert analysis["people"][0]["coverage"] < 100.0
     assert analysis["people"][0]["durationSeconds"] == pytest.approx(10.0, abs=0.3)
+    gaps = analysis["people"][0]["gaps"]
+    assert len(gaps) == 1 and gaps[0]["from"] == pytest.approx(4.0, abs=0.3) and gaps[0]["to"] == pytest.approx(5.0, abs=0.3)
+    # Fragmentos costurados: os keyframes usam o ID definitivo e os aliases ficam registrados.
+    keyframe_ids = {person["id"] for frame in analysis["keyframes"] for person in frame["persons"]}
+    assert keyframe_ids == {analysis["people"][0]["id"]}
+    aliases = analysis["people"][0]["idAliases"]
+    assert all(alias != analysis["people"][0]["id"] for alias in aliases)
 
 
 def test_two_swimmers_produce_two_entries(video_factory, fake_pose_factory):
@@ -65,6 +80,9 @@ def test_two_swimmers_produce_two_entries(video_factory, fake_pose_factory):
     assert analysis["metadata"]["persons"] == 2
     ids = [person["id"] for person in analysis["people"]]
     assert len(set(ids)) == 2
+    # Cada atleta tem os próprios eventos de braçada, não só o principal.
+    event_people = {event["personId"] for event in analysis["events"]}
+    assert event_people == set(ids)
 
 
 def test_no_person_raises(video_factory, fake_pose_factory):
@@ -158,7 +176,9 @@ def test_keyframes_contract(video_factory, fake_pose_factory):
 
 
 def test_keyframes_are_capped(video_factory, fake_pose_factory):
-    video = video_factory(frames=3600, fps=30.0)  # 120 s
+    video = video_factory(frames=4200, fps=30.0)  # 140 s: 700 amostras a 5 Hz > cap
     pose = fake_pose_factory([{"start_x": 120.0, "start_y": 120.0, "speed": 4.0, "stroke_hz": 1.0}])
     analysis = analyze_video(video, pose, None, AT_10HZ)
     assert len(analysis["keyframes"]) <= KEYFRAME_OUTPUT_CAP
+    assert analysis["metadata"]["keyframesTruncatedAt"] == analysis["keyframes"][-1]["t"]
+    assert analysis["metadata"]["keyframesTruncatedAt"] < analysis["metadata"]["durationSeconds"]

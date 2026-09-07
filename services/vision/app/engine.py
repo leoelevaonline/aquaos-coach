@@ -106,18 +106,45 @@ def _keypoint_series(samples: list, keypoint: int, axis: int) -> tuple[np.ndarra
     return np.asarray(times, dtype=np.float64), np.asarray(values, dtype=np.float64)
 
 
-def _stroke_events(stroke_times: list[float], confidence: float) -> list[dict]:
+def _stroke_events(person_id: int, stroke_times: list[float], confidence: float) -> list[dict]:
     safe_confidence = int(round(max(55.0, min(98.0, 40.0 + 60.0 * confidence))))
     return [
         {
-            "id": f"stroke-{index + 1}",
+            "id": f"stroke-{person_id}-{index + 1}",
             "time": round(float(time), 2),
             "category": "stroke",
-            "label": f"Braçada {index + 1}",
+            "label": f"Braçada {index + 1} · Atleta #{person_id}",
             "confidence": safe_confidence,
+            "personId": person_id,
         }
         for index, time in enumerate(stroke_times)
     ]
+
+
+def _track_gaps(track: Track, sample_rate: float, min_gap_seconds: float = 0.75) -> list[dict]:
+    """Intervalos sem amostra do atleta (submersão, oclusão, saída de quadro)."""
+    gaps: list[dict] = []
+    threshold = max(min_gap_seconds, 3.0 / sample_rate)
+    for previous, current in zip(track.history, track.history[1:]):
+        gap = current.timestamp - previous.timestamp
+        if gap >= threshold:
+            gaps.append({"from": round(previous.timestamp, 2), "to": round(current.timestamp, 2)})
+    return gaps
+
+
+def _metric_validity(metrics: TrackMetrics, stats: StrokeStats, calibrated: bool) -> dict:
+    """Estado de validade por métrica: `measured`, `unavailable` ou `uncalibrated`."""
+    has_cadence = stats.count >= 2 and stats.rate_per_minute > 0
+    distance_state = "measured" if calibrated else "uncalibrated"
+    return {
+        "strokes": "measured" if stats.count > 0 else "unavailable",
+        "strokeRate": "measured" if has_cadence else "unavailable",
+        "rhythmConsistency": "measured" if has_cadence and stats.count >= 3 else "unavailable",
+        "avgSpeed": distance_state if metrics.duration_seconds > 0 else "unavailable",
+        "maxSpeed": distance_state if metrics.duration_seconds > 0 else "unavailable",
+        "distance": distance_state if metrics.duration_seconds > 0 else "unavailable",
+        "distancePerStroke": distance_state if has_cadence and metrics.distance_per_stroke > 0 else "unavailable",
+    }
 
 
 def _analyze_track(track: Track, calibration: Calibration | None, sample_rate: float) -> dict:
@@ -164,6 +191,7 @@ def _analyze_track(track: Track, calibration: Calibration | None, sample_rate: f
     return {
         "track": track,
         "metrics": metrics,
+        "stats": stats,
         "strokeTimes": [round(float(value), 2) for value in stroke_times],
         "signal": signal.label if signal else None,
         "times": times,
@@ -334,15 +362,25 @@ def analyze_video(
         primary = analyzed[0]
         primary_metrics: TrackMetrics = primary["metrics"]
 
+        # Keyframes carregam o ID bruto do fragmento; a costura pós-varredura
+        # unifica identidades, então o player recebe o mapa alias -> pessoa.
+        alias_to_person: dict[int, int] = {}
         people = []
+        events: list[dict] = []
         for item in analyzed:
+            track: Track = item["track"]
             metrics: TrackMetrics = item["metrics"]
+            for alias in track.merged_ids:
+                alias_to_person[alias] = track.track_id
+            events.extend(_stroke_events(track.track_id, item["strokeTimes"], track.mean_confidence))
             people.append(
                 {
-                    "id": item["track"].track_id,
-                    "firstSeen": round(item["track"].history[0].timestamp, 2),
-                    "lastSeen": round(item["track"].history[-1].timestamp, 2),
+                    "id": track.track_id,
+                    "idAliases": sorted(track.merged_ids),
+                    "firstSeen": round(track.history[0].timestamp, 2),
+                    "lastSeen": round(track.history[-1].timestamp, 2),
                     "durationSeconds": metrics.duration_seconds,
+                    "gaps": _track_gaps(track, sample_rate),
                     "strokes": metrics.strokes,
                     "strokeRate": metrics.stroke_rate,
                     "rhythmConsistency": metrics.rhythm_consistency,
@@ -350,37 +388,29 @@ def analyze_video(
                     "maxSpeed": metrics.max_speed,
                     "distance": metrics.distance,
                     "distancePerStroke": metrics.distance_per_stroke,
-                    "technicalIndex": metrics.technical_index,
-                    "meanConfidence": round(item["track"].mean_confidence, 3),
+                    "units": metrics.units,
+                    "validity": _metric_validity(metrics, item["stats"], calibration is not None),
+                    "meanConfidence": round(track.mean_confidence, 3),
                     "coverage": metrics.coverage,
                     "strokeSignal": item["signal"],
                     "strokeTimes": item["strokeTimes"],
                 }
             )
-
-        events = [
-            {
-                "id": "phase-entry",
-                "time": round(primary["track"].history[0].timestamp, 2),
-                "category": "entry",
-                "label": "Atleta identificado no quadro",
-                "confidence": int(round(60.0 + 38.0 * primary["track"].mean_confidence)),
-            },
-            *_stroke_events(primary["strokeTimes"], primary["track"].mean_confidence),
-            {
-                "id": "phase-finish",
-                "time": round(primary["track"].history[-1].timestamp, 2),
-                "category": "finish",
-                "label": "Saída do campo de análise",
-                "confidence": int(round(60.0 + 38.0 * primary["track"].mean_confidence)),
-            },
-        ]
-        events.sort(key=lambda event: event["time"])
+        events.sort(key=lambda event: (event["time"], event["personId"]))
 
         # O player interpola entre amostras: 6 Hz cobre o olho humano e mantém
-        # o registro do vídeo leve no store e no SSE.
+        # o registro do vídeo leve no store e no SSE. Fragmentos costurados
+        # recebem o ID definitivo aqui, para o esqueleto não trocar de cor.
         stride = max(1, int(np.ceil(sample_rate / KEYFRAME_OUTPUT_HZ)))
-        keyframes = raw_keyframes[::stride][:KEYFRAME_OUTPUT_CAP]
+        keyframes = raw_keyframes[::stride]
+        keyframes_truncated_at = None
+        if len(keyframes) > KEYFRAME_OUTPUT_CAP:
+            keyframes_truncated_at = keyframes[KEYFRAME_OUTPUT_CAP - 1]["t"]
+            keyframes = keyframes[:KEYFRAME_OUTPUT_CAP]
+        if alias_to_person:
+            for frame in keyframes:
+                for person in frame["persons"]:
+                    person["id"] = alias_to_person.get(person["id"], person["id"])
 
         bitrate = int(size * 8 / duration) if duration > 0 and size else 0
         _report(on_progress, 100.0, "Análise concluída")
@@ -400,7 +430,9 @@ def analyze_video(
                 "calibrated": calibration is not None,
                 "calibrationRmse": round(calibration.rmse, 3) if calibration else None,
                 "persons": len(analyzed),
+                "primaryPersonId": primary["track"].track_id,
                 "sampleFps": round(sample_rate, 2),
+                "keyframesTruncatedAt": keyframes_truncated_at,
             },
             "metrics": {
                 "detectedCycles": primary_metrics.strokes,
@@ -408,7 +440,6 @@ def analyze_video(
                 "rhythmConsistency": int(round(primary_metrics.rhythm_consistency)),
                 "meanMotion": int(round(primary_metrics.mean_motion)),
                 "peakMotion": int(round(primary_metrics.peak_motion)),
-                "technicalIndex": primary_metrics.technical_index,
             },
             "timeline": motion_timeline(primary["times"], primary["points"], calibration),
             "events": events,

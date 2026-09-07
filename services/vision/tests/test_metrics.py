@@ -32,7 +32,7 @@ def test_constant_speed_metrics():
     assert metrics.distance == pytest.approx(100.0, abs=1.0)
     assert metrics.steadiness > 95.0
     assert metrics.distance_per_stroke == pytest.approx(10.0, abs=0.2)
-    assert metrics.technical_index > 90
+    assert not hasattr(metrics, "technical_index")
     assert metrics.units == "px"
 
 
@@ -57,7 +57,15 @@ def test_stationary_track_degenerates_gracefully():
     assert metrics.avg_speed == 0.0
     assert metrics.distance == 0.0
     assert metrics.mean_motion == 0.0
-    assert metrics.technical_index == 0
+    assert metrics.steadiness == 0.0
+
+
+def test_distance_per_stroke_requires_measured_cadence():
+    times, points = constant_speed_track()
+    single = compute_track_metrics(
+        times, points, calibration=None, stroke_stats=StrokeStats(1, 0.0, 0.0, []), tracked_frames=100, pose_frames=100
+    )
+    assert single.distance_per_stroke == 0.0
 
 
 def test_normalize_motion_uses_p95_as_ceiling():
