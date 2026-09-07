@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Anotações ou predições de rastreamento AquaVision v1",
+  "type": "object",
+  "required": ["protocolVersion", "sequenceId", "fps", "frames"],
+  "properties": {
+    "protocolVersion": {"const": "1.0"}, "sequenceId": {"type": "string"}, "fps": {"type": "number", "exclusiveMinimum": 0},
+    "frames": {"type": "array", "items": {"type": "object", "required": ["frame", "objects"], "properties": {"frame": {"type": "integer", "minimum": 0}, "objects": {"type": "array", "items": {"type": "object", "required": ["id", "bbox"], "properties": {"id": {"type": "string"}, "bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}}}}}}}
+  }
+}

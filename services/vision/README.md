@@ -70,6 +70,13 @@ por braçada; o RMSE da homografia é reportado em `metadata.calibrationRmse`.
 
 Os testes rodam sem o modelo real (pose injetável + vídeos sintéticos).
 
+## Avaliação quantitativa e benchmark
+
+O protocolo versionado, schemas de corpus/anotação/telemetria, CLI determinística
+e gate contra alegações sem evidência ficam em
+[`app/evaluation/README.md`](app/evaluation/README.md). Ele não inclui corpus
+nem resultados e os testes sintéticos validam somente os cálculos.
+
 ## Variáveis de ambiente
 
 | Variável | Padrão | Descrição |
