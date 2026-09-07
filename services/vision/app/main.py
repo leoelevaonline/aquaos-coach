@@ -98,6 +98,7 @@ def create_app(settings: Settings | None = None, pose: object | None = None) -> 
         if pose_engine is None:
             model = pose
             refine_model = None
+            model_version = "injected"
         else:
             try:
                 model = pose_engine.get()
@@ -105,6 +106,7 @@ def create_app(settings: Settings | None = None, pose: object | None = None) -> 
                 raise HTTPException(status_code=503, detail=str(error)) from error
             wants_refinement = request.refinement if request.refinement is not None else settings.refinement
             refine_model = pose_engine.load_refinement() if wants_refinement else None
+            model_version = f"RTMO {settings.mode}" + (f" + RTMPose {settings.mode}" if refine_model is not None else "")
 
         video_path = resolve_media_path(request.path, settings.media_root)
         calibration_points = None
@@ -129,10 +131,12 @@ def create_app(settings: Settings | None = None, pose: object | None = None) -> 
             raise HTTPException(status_code=503, detail="Serviço ocupado com outra análise.")
         try:
             # Inference libera o GIL; o lock asyncio serializa análises sem bloquear o loop.
-            return await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 None,
                 functools.partial(analyze_video, str(video_path), model, calibration_points, options, None, refine_model),
             )
+            result["modelVersion"] = model_version
+            return result
         except NoPeopleDetected as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ValueError as error:

@@ -4,6 +4,21 @@ Arquitetura: **1 EC2 t3.small** (2 vCPU / 2 GB RAM, us-east-1) rodando
 Postgres + API + Web + Caddy via `docker-compose.aws.yml`. HTTPS automático,
 sem sleep, uploads persistidos em volume Docker no EBS.
 
+## AquaVision: capacidade recomendada
+
+O AquaVision é opcional e fica apenas na rede interna do Compose, compartilhando
+o volume de uploads da API e um volume próprio para modelos. Para habilitá-lo,
+planeje uma instância com **ao menos 4 vCPU e 8 GB de RAM**; a configuração atual
+de t3.small continua destinada à validação sem esse serviço. Esta é uma
+recomendação de capacidade, não um benchmark de desempenho: valide com os vídeos
+e a concorrência previstos antes de qualquer alteração em produção.
+
+Ative o perfil apenas na instância dimensionada para ele:
+
+```bash
+docker compose -f docker-compose.aws.yml --profile vision up -d --build
+```
+
 ## Custo estimado (região us-east-1)
 
 | Item | Valor |

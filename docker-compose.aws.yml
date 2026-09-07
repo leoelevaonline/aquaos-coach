@@ -58,6 +58,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:?defina em .env}
       STORAGE_PATH: /data/storage
       BACKUP_PATH: /data/storage/backups
+      # Serviço interno opcional; a API usa AquaMotion caso esteja indisponível.
+      VISION_URL: http://vision:8800
       APP_BASE_URL: ${APP_BASE_URL:-https://natacao.elevamkt.digital}
       # Assistente IA (gateway substituível; vazio = assistente desativado)
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -75,10 +77,39 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      vision:
+        condition: service_healthy
+        required: false
+    networks: [backend]
     mem_limit: 900m # FFmpeg precisa de margem; swap cobre picos
     memswap_limit: 1500m
     restart: unless-stopped
     logging: *logging
+
+  vision:
+    profiles: ["vision"]
+    build:
+      context: .
+      dockerfile: services/vision/Dockerfile
+    environment:
+      VISION_MEDIA_ROOT: /data/storage/uploads
+    expose:
+      - "8800"
+    volumes:
+      # Mesmo volume e caminho da API; o cliente não transmite paths externamente.
+      - natacao_api_storage:/data/storage
+      - natacao_vision_models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8800/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    mem_limit: 3g
+    memswap_limit: 4g
+    restart: unless-stopped
+    logging: *logging
+    networks: [backend]
 
   web:
     build:
@@ -93,6 +124,7 @@ services:
       - "3000"
     depends_on:
       - api
+    networks: [backend]
     mem_limit: 400m
     memswap_limit: 600m
     restart: unless-stopped
@@ -112,6 +144,7 @@ services:
     depends_on:
       - api
       - web
+    networks: [edge, backend]
     mem_limit: 150m
     restart: unless-stopped
     logging: *logging
@@ -119,5 +152,11 @@ services:
 volumes:
   natacao_pgdata:
   natacao_api_storage:
+  natacao_vision_models:
   natacao_caddy_data:
   natacao_caddy_config:
+
+networks:
+  edge:
+  backend:
+    internal: true
