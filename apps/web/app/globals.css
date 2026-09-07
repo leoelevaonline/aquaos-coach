@@ -2468,9 +2468,16 @@ body :is(.athlete-row b, .create-options strong, .session-strip strong,
 }
 
 /* ── Atletas rastreados pelo AquaVision (revisão de vídeo) ──── */
-.tracked-athletes { display: grid; gap: 7px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--soft-line); }
-.tracked-athlete-row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 10px; background: #fbfdfd; }
-.tracked-athlete-dot { width: 12px; height: 12px; border-radius: 50%; }
+/* `.review-sidebar > div` estiliza as linhas da timeline; este container precisa escapar dessa grade de 3 colunas. */
+.review-sidebar > .tracked-athletes { display: grid; grid-template-columns: 1fr; gap: 7px; margin-bottom: 16px; padding: 0 0 14px; border-bottom: 1px solid var(--soft-line); }
+.tracked-athletes > .eyebrow { width: auto; height: auto; display: block; color: var(--muted); border-radius: 0; font-size: var(--type-micro); font-weight: 700; }
+.tracked-athletes > .tracked-athlete-row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 10px; background: #fbfdfd; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.tracked-athlete-row.active { border-color: var(--teal); box-shadow: 0 0 0 2px rgba(20,184,166,.18); }
+.tracked-athlete-dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 12px; }
+.athlete-selector { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.athlete-selector button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: #fbfdfd; color: var(--ink); font: inherit; font-size: var(--type-micro); font-weight: 650; cursor: pointer; }
+.athlete-selector button.active { border-color: var(--teal); background: rgba(20,184,166,.12); }
+.live-timeline .timeline-gap { position: absolute; top: 0; bottom: 0; text-decoration: none; background: repeating-linear-gradient(135deg, rgba(220,38,38,.55) 0 3px, transparent 3px 6px); border-radius: 3px; pointer-events: none; }
 .tracked-athlete-row b { font-size: var(--type-control); font-weight: 650; }
 .tracked-athlete-row small { display: block; color: var(--muted); font-size: var(--type-micro); margin-top: 2px; }
 .tracked-athlete-row em { font-style: normal; color: var(--muted); font-size: var(--type-micro); text-align: right; }

@@ -21,16 +21,31 @@ export const COCO_CONNECTIONS: Array<[number, number]> = [
   [11, 13], [13, 15], [12, 14], [14, 16],
 ];
 
-export const TRACK_COLORS = ["#22d3ee", "#34d399", "#fbbf24", "#f472b6"];
+export const TRACK_COLORS = ["#22d3ee", "#34d399", "#fbbf24", "#f472b6", "#a78bfa", "#fb923c"];
 const KEYPOINT_VISIBLE = 0.3;
+/** Sem amostra do atleta por mais que isto, o esqueleto sai da tela em vez de congelar. */
+export const MAX_HOLD_SECONDS = 0.5;
 
-/** Estado da pose no instante t: interpola linearmente entre keyframes por atleta. */
+/** Cor estável por identidade de atleta, na ordem em que a análise lista `people`. */
+export function trackColor(personId: number, personIds: number[]): string {
+  const index = personIds.indexOf(personId);
+  return TRACK_COLORS[(index >= 0 ? index : personId) % TRACK_COLORS.length];
+}
+
+/**
+ * Estado da pose no instante t: interpola linearmente entre keyframes por
+ * atleta. Um atleta só aparece se tem amostra dos dois lados de t (ou a
+ * amostra mais próxima está a menos de MAX_HOLD_SECONDS): quem foi perdido
+ * pelo rastreio desaparece em vez de ficar parado no último ponto.
+ */
 export function poseAtTime(keyframes: TrackedKeyframe[], t: number): PoseAtTime {
   if (!keyframes.length) return [];
-  let previous = keyframes[0];
-  let next = keyframes[keyframes.length - 1];
-  if (t <= previous.t) return previous.persons;
-  if (t >= next.t) return next.persons;
+  const first = keyframes[0];
+  const last = keyframes[keyframes.length - 1];
+  if (t <= first.t) return first.t - t <= MAX_HOLD_SECONDS ? first.persons : [];
+  if (t >= last.t) return t - last.t <= MAX_HOLD_SECONDS ? last.persons : [];
+  let previous = first;
+  let next = last;
   for (let index = 1; index < keyframes.length; index += 1) {
     if (keyframes[index].t >= t) {
       next = keyframes[index];
@@ -42,10 +57,15 @@ export function poseAtTime(keyframes: TrackedKeyframe[], t: number): PoseAtTime 
   if (span <= 0) return previous.persons;
   const ratio = (t - previous.t) / span;
   const nextById = new Map(next.persons.map((person) => [person.id, person]));
-  return previous.persons.map((person) => {
+  const result: PoseAtTime = [];
+  for (const person of previous.persons) {
     const match = nextById.get(person.id);
-    if (!match) return person;
-    return {
+    if (!match) {
+      if (t - previous.t <= MAX_HOLD_SECONDS) result.push(person);
+      continue;
+    }
+    nextById.delete(person.id);
+    result.push({
       id: person.id,
       kpts: person.kpts.map((point, keypoint) => {
         const target = match.kpts[keypoint];
@@ -56,25 +76,33 @@ export function poseAtTime(keyframes: TrackedKeyframe[], t: number): PoseAtTime 
           Math.min(point[2], target[2]),
         ] as [number, number, number];
       }),
-    };
-  });
+    });
+  }
+  // Atleta que reaparece no próximo keyframe: entra assim que estiver perto.
+  for (const person of nextById.values()) {
+    if (next.t - t <= MAX_HOLD_SECONDS) result.push(person);
+  }
+  return result;
 }
 
 /** Desenha os esqueletos rastreados; coordenadas em pixels do vídeo original. */
 export function drawTrackedSkeleton(
   context: CanvasRenderingContext2D,
-  options: { persons: PoseAtTime; width: number; height: number; videoWidth: number; videoHeight: number },
+  options: { persons: PoseAtTime; width: number; height: number; videoWidth: number; videoHeight: number; personIds?: number[]; selectedId?: number | null },
 ): void {
-  const { persons, width, height, videoWidth, videoHeight } = options;
+  const { persons, width, height, videoWidth, videoHeight, selectedId = null } = options;
+  const personIds = options.personIds ?? persons.map((person) => person.id);
   context.clearRect(0, 0, width, height);
   if (!videoWidth || !videoHeight) return;
   const scaleX = width / videoWidth;
   const scaleY = height / videoHeight;
-  persons.forEach((person, index) => {
-    const color = TRACK_COLORS[index % TRACK_COLORS.length];
+  persons.forEach((person) => {
+    const color = trackColor(person.id, personIds);
+    const dimmed = selectedId !== null && selectedId !== person.id;
     const points = person.kpts.map(([x, y]) => ({ x: x * scaleX, y: y * scaleY }));
     const visible = person.kpts.map(([, , score]) => score >= KEYPOINT_VISIBLE);
-    context.lineWidth = 3;
+    context.globalAlpha = dimmed ? 0.35 : 1;
+    context.lineWidth = dimmed ? 2 : 3;
     context.strokeStyle = color;
     context.lineCap = "round";
     context.beginPath();
@@ -97,6 +125,7 @@ export function drawTrackedSkeleton(
       context.fillStyle = color;
       context.fillText(`A#${person.id}`, nose.x + 8, nose.y - 8);
     }
+    context.globalAlpha = 1;
   });
 }
 
@@ -104,14 +133,19 @@ export function ServerTrackingLayer({
   videoRef,
   active,
   keyframes,
-  peopleCount = 0,
+  personIds = [],
+  selectedId = null,
+  coverageEndsAt = null,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   active: boolean;
   keyframes: TrackedKeyframe[];
-  peopleCount?: number;
+  personIds?: number[];
+  selectedId?: number | null;
+  coverageEndsAt?: number | null;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const visibleRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -126,13 +160,22 @@ export function ServerTrackingLayer({
         }
         const context = canvas.getContext("2d");
         if (context) {
+          const persons = poseAtTime(keyframes, video.currentTime);
           drawTrackedSkeleton(context, {
-            persons: poseAtTime(keyframes, video.currentTime),
+            persons,
             width: canvas.width,
             height: canvas.height,
             videoWidth: video.videoWidth,
             videoHeight: video.videoHeight,
+            personIds,
+            selectedId,
           });
+          if (visibleRef.current) {
+            const beyondCoverage = coverageEndsAt !== null && video.currentTime > coverageEndsAt;
+            visibleRef.current.textContent = beyondCoverage
+              ? `sem pose sincronizada após ${coverageEndsAt.toFixed(0)} s`
+              : `${persons.length} de ${personIds.length || persons.length} no quadro`;
+          }
         }
       }
       frame = requestAnimationFrame(render);
@@ -143,11 +186,11 @@ export function ServerTrackingLayer({
       const canvas = canvasRef.current;
       canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
     };
-  }, [active, keyframes, videoRef]);
+  }, [active, keyframes, videoRef, personIds, selectedId, coverageEndsAt]);
 
   if (!active) return null;
   return <>
     <canvas ref={canvasRef} className="pose-tracking-canvas" />
-    <span className="pose-tracking-chip"><Sparkles size={12} />AquaVision · {peopleCount} {peopleCount === 1 ? "atleta rastreado" : "atletas rastreados"} · servidor</span>
+    <span className="pose-tracking-chip"><Sparkles size={12} />AquaVision · <span ref={visibleRef} /></span>
   </>;
 }
