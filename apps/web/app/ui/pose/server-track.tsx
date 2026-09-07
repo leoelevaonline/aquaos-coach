@@ -185,7 +185,7 @@ export function ServerTrackingLayer({
             const beyondCoverage = coverageEndsAt !== null && video.currentTime > coverageEndsAt;
             visibleRef.current.textContent = beyondCoverage
               ? `sem pose sincronizada após ${coverageEndsAt.toFixed(0)} s`
-              : `${persons.length} de ${personIds.length || persons.length} no quadro`;
+              : persons.length ? `${persons.length} de ${personIds.length || persons.length} no quadro` : "sem evidência nesta janela";
           }
         }
       }

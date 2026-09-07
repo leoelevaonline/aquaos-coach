@@ -28,6 +28,7 @@ export type VisionAnalysis = {
   events: { id: string; time: number; category: string; label: string; confidence: number; note?: string; personId?: number }[];
   people?: Array<Record<string, unknown>>;
   keyframes?: Array<{ t: number; persons: Array<{ id: number; kpts: number[][] }> }>;
+  keyframeSegments?: Array<{ from: number; to: number; count: number; keyframes: Array<{ t: number; persons: Array<{ id: number; kpts: number[][] }> }> }>;
 };
 
 export type VisionStage = (progress: number, stage: string) => void;

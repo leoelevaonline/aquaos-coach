@@ -30,6 +30,30 @@ beforeAll(async () => app.ready());
 afterAll(async () => { await app.close(); rmSync(root, { recursive: true, force: true }); });
 
 describe("uploads e importações operacionais", () => {
+  it("entrega poses paginadas por janela sem enviar toda a evidência ao cliente", async () => {
+    const video = store.create("videos", {
+      id: "video-paginado",
+      organizationId: "org-demo",
+      athleteId: "ath-ana",
+      analysis: {
+        engine: "AquaVision",
+        keyframeSegments: [
+          { from: 0, to: 10, count: 2, keyframes: [{ t: 1, persons: [{ id: 1, kpts: [[1, 2, .9]] }] }, { t: 9, persons: [{ id: 1, kpts: [[3, 4, .9]] }] }] },
+          { from: 10, to: 20, count: 1, keyframes: [{ t: 12, persons: [{ id: 7, kpts: [[5, 6, .9]] }] }] },
+        ],
+      },
+    });
+    const summary = await app.inject({ method: "GET", url: `/api/v1/manage/videos/${video.id}`, headers: { cookie } });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json().analysis.keyframes).toBeUndefined();
+    expect(summary.json().analysis.keyframeSegments).toEqual([{ from: 0, to: 10, count: 2 }, { from: 10, to: 20, count: 1 }]);
+
+    const window = await app.inject({ method: "GET", url: `/api/v1/videos/${video.id}/keyframes?from=8&to=13`, headers: { cookie } });
+    expect(window.statusCode).toBe(200);
+    expect(window.json().keyframes.map((frame: { t: number }) => frame.t)).toEqual([9, 12]);
+    expect((await app.inject({ method: "GET", url: `/api/v1/videos/${video.id}/keyframes?from=0&to=31`, headers: { cookie } })).statusCode).toBe(400);
+  });
+
   it("preserva documento, extrai conteúdo e injeta organização/ator", async () => {
     const response = await app.inject({ method: "POST", url: "/api/v1/uploads?kind=documents&title=Plano%20A2", ...form("plano-a2.txt", "text/plain", "8x100 livre A2") });
     expect(response.statusCode).toBe(201);

@@ -38,8 +38,7 @@ METHODOLOGY = (
 # Índices COCO-17 usados como referência de posição do atleta.
 HIP_LEFT, HIP_RIGHT, NOSE = 11, 12, 0
 KEYFRAME_OUTPUT_HZ = 6.0  # o player interpola; 6 Hz basta e mantém o payload leve
-KEYFRAME_OUTPUT_CAP = 600
-KEYFRAME_MAX_PERSONS = 6
+KEYFRAME_SEGMENT_SECONDS = 10.0
 REFINEMENT_BOX_EXPANSION = 0.25  # margem ao redor da caixa do atleta para o crop
 REFINEMENT_MIN_VALID_KEYPOINTS = 8
 REFINEMENT_MIN_MEAN_SCORE = 0.5
@@ -290,9 +289,23 @@ def _collect_keyframes(tracker: ByteTracker, frame_index: int, timestamp: float)
             for (x, y), s in zip(sample.keypoints, sample.keypoint_scores)
         ]
         persons.append({"id": track.track_id, "kpts": kpts})
-        if len(persons) >= KEYFRAME_MAX_PERSONS:
-            break
     return persons
+
+
+def _segment_keyframes(keyframes: list[dict]) -> list[dict]:
+    """Agrupa evidência por tempo para a API entregar apenas a janela solicitada."""
+    segments: dict[int, list[dict]] = {}
+    for frame in keyframes:
+        segments.setdefault(int(frame["t"] // KEYFRAME_SEGMENT_SECONDS), []).append(frame)
+    return [
+        {
+            "from": round(index * KEYFRAME_SEGMENT_SECONDS, 2),
+            "to": round((index + 1) * KEYFRAME_SEGMENT_SECONDS, 2),
+            "count": len(frames),
+            "keyframes": frames,
+        }
+        for index, frames in sorted(segments.items())
+    ]
 
 
 def analyze_video(
@@ -406,14 +419,11 @@ def analyze_video(
         # recebem o ID definitivo aqui, para o esqueleto não trocar de cor.
         stride = max(1, int(np.ceil(sample_rate / KEYFRAME_OUTPUT_HZ)))
         keyframes = raw_keyframes[::stride]
-        keyframes_truncated_at = None
-        if len(keyframes) > KEYFRAME_OUTPUT_CAP:
-            keyframes_truncated_at = keyframes[KEYFRAME_OUTPUT_CAP - 1]["t"]
-            keyframes = keyframes[:KEYFRAME_OUTPUT_CAP]
         if alias_to_person:
             for frame in keyframes:
                 for person in frame["persons"]:
                     person["id"] = alias_to_person.get(person["id"], person["id"])
+        keyframe_segments = _segment_keyframes(keyframes)
 
         bitrate = int(size * 8 / duration) if duration > 0 and size else 0
         _report(on_progress, 100.0, "Análise concluída")
@@ -435,7 +445,7 @@ def analyze_video(
                 "persons": len(analyzed),
                 "primaryPersonId": primary["track"].track_id,
                 "sampleFps": round(sample_rate, 2),
-                "keyframesTruncatedAt": keyframes_truncated_at,
+                "keyframesTruncatedAt": None,
             },
             # Movimento global é diagnóstico de vídeo, não métrica esportiva.
             "metrics": {"meanMotion": int(round(primary_metrics.mean_motion)), "peakMotion": int(round(primary_metrics.peak_motion))},
@@ -449,7 +459,7 @@ def analyze_video(
             "timeline": motion_timeline(primary["times"], primary["points"], calibration),
             "events": events,
             "people": people,
-            "keyframes": keyframes,
+            "keyframeSegments": keyframe_segments,
         }
     finally:
         capture.release()

@@ -226,9 +226,15 @@ export type VisionAnalysisRecord = {
   events?: Array<{ id: string; time: number; category: string; label: string; confidence: number; personId?: number }>;
   people?: VisionPersonRecord[];
   keyframes?: Array<{ t: number; persons: Array<{ id: number; kpts: number[][] }> }>;
+  keyframeSegments?: Array<{ from: number; to: number; count: number; keyframes: Array<{ t: number; persons: Array<{ id: number; kpts: number[][] }> }> }>;
 };
 
 const UNMEASURED = "não medido";
+
+function keyframesForAnalysis(analysis: VisionAnalysisRecord) {
+  if (analysis.keyframeSegments) return analysis.keyframeSegments.flatMap((segment) => segment.keyframes);
+  return analysis.keyframes ?? [];
+}
 
 /** Valor com estado de validade explícito: a IA nunca recebe zero disfarçado de medição. */
 function measured(person: VisionPersonRecord, key: NonNullable<VisionPersonRecord["validity"]> extends Partial<Record<infer K, MetricValidity>> ? K : never, value: number | string, unit = ""): string {
@@ -314,7 +320,7 @@ export function buildLiveWindowContext(analysis: VisionAnalysisRecord, currentTi
   // A janela termina no instante atual: comentar o que ainda não aconteceu
   // no player deixava o comentário fora de sincronia com o vídeo.
   const to = currentTime;
-  const frames = (analysis.keyframes ?? []).filter((frame) => frame.t >= from && frame.t <= to);
+  const frames = keyframesForAnalysis(analysis).filter((frame) => frame.t >= from && frame.t <= to);
   const presence = new Map<number, { frames: number; lastSeen: number; confidence: number; x0: number; x1: number; y0: number; y1: number }>();
   for (const frame of frames) {
     for (const person of frame.persons) {

@@ -59,6 +59,12 @@ describe("poseAtTime", () => {
   it("retorna vazio sem keyframes", () => {
     expect(poseAtTime([], 1)).toEqual([]);
   });
+
+  it("não cria pose quando a janela carregada não contém o instante do player", () => {
+    const temporalWindow: TrackedKeyframe[] = [{ t: 20, persons: [{ id: 3, kpts: kpts(30, 30) }] }];
+    expect(poseAtTime(temporalWindow, 12)).toEqual([]);
+    expect(poseAtTime(temporalWindow, 20)).toHaveLength(1);
+  });
 });
 
 describe("trackColor", () => {

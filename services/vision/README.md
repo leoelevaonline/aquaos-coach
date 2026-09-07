@@ -14,12 +14,13 @@ alta resolução durante submersão parcial e recuperação de amostras quando a
 pose no crop é inequívoca (>= 8 keypoints válidos com confiança média >= 0,5).
 Desligue com `VISION_REFINEMENT=0` ou `{"refinement": false}` na requisição.
 
-A resposta inclui `keyframes` (pose por atleta a ~6 Hz, no espaço do vídeo
+A resposta inclui `keyframeSegments` (pose por atleta a ~6 Hz, no espaço do vídeo
 original, no máximo 600 amostras): a UI interpola e desenha o esqueleto em
 tempo real sincronizado com o player. Fragmentos costurados após submersão
 recebem o ID definitivo do atleta nos keyframes (`people[].idAliases` lista os
 IDs brutos). Quando o vídeo excede o limite de amostras,
-`metadata.keyframesTruncatedAt` informa até que instante há pose sincronizada.
+em segmentos de 10 s. A API da plataforma fornece apenas a janela temporal
+pedida pelo player, sem transferir a pose do vídeo inteiro ao navegador.
 
 Cada entrada de `people` traz `gaps`, `observedDurationSeconds`,
 `observedSegments` e `validity` por métrica. Distância, velocidade, ciclos e
