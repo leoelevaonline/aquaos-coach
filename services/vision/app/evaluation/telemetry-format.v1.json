@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Telemetria de benchmark AquaVision v1",
+  "type": "object",
+  "required": ["protocolVersion", "runId", "framesReceived", "framesProcessed", "wallTimeMs", "stageLatencyMs", "queueWaitMs", "memoryRssBytes"],
+  "properties": {"protocolVersion": {"const": "1.0"}, "runId": {"type": "string"}, "framesReceived": {"type": "integer", "minimum": 0}, "framesProcessed": {"type": "integer", "minimum": 0}, "wallTimeMs": {"type": "number", "exclusiveMinimum": 0}, "stageLatencyMs": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "number", "minimum": 0}}}, "queueWaitMs": {"type": "array", "items": {"type": "number", "minimum": 0}}, "memoryRssBytes": {"type": "array", "items": {"type": "integer", "minimum": 0}}}
+}
