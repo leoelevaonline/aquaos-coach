@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.calibration import CalibrationPoint
-from app.engine import KEYFRAME_OUTPUT_CAP, AnalyzeOptions, _track_gaps, analyze_video
+from app.engine import AnalyzeOptions, _track_gaps, analyze_video
 from app.errors import NoPeopleDetected
 from tests.conftest import FakeRefine
 
@@ -24,6 +24,10 @@ AT_10HZ = AnalyzeOptions(target_fps=10.0)
 def test_gap_contract_uses_same_boundary_as_metric_segmentation():
     track = SimpleNamespace(history=[SimpleNamespace(timestamp=0.0), SimpleNamespace(timestamp=0.65)])
     assert _track_gaps(track, sample_rate=10.0) == [{"from": 0.0, "to": 0.65}]
+
+
+def all_keyframes(analysis: dict) -> list[dict]:
+    return [frame for segment in analysis["keyframeSegments"] for frame in segment["keyframes"]]
 
 
 def test_single_swimmer_full_contract(video_factory, fake_pose_factory):
@@ -72,7 +76,7 @@ def test_hidden_swimmer_keeps_single_track(video_factory, fake_pose_factory):
     gaps = analysis["people"][0]["gaps"]
     assert len(gaps) == 1 and gaps[0]["from"] == pytest.approx(4.0, abs=0.3) and gaps[0]["to"] == pytest.approx(5.0, abs=0.3)
     # Fragmentos costurados: os keyframes usam o ID definitivo e os aliases ficam registrados.
-    keyframe_ids = {person["id"] for frame in analysis["keyframes"] for person in frame["persons"]}
+    keyframe_ids = {person["id"] for frame in all_keyframes(analysis) for person in frame["persons"]}
     assert keyframe_ids == {analysis["people"][0]["id"]}
     aliases = analysis["people"][0]["idAliases"]
     assert all(alias != analysis["people"][0]["id"] for alias in aliases)
@@ -91,6 +95,15 @@ def test_two_swimmers_produce_two_entries(video_factory, fake_pose_factory):
     ids = [person["id"] for person in analysis["people"]]
     assert len(set(ids)) == 2
     assert analysis["events"] == []
+
+
+def test_keyframes_preserve_more_than_six_swimmers(video_factory, fake_pose_factory):
+    video = video_factory(frames=300, fps=30.0)
+    swimmers = [{"start_x": 40.0 + index * 50, "start_y": 120.0, "speed": 10.0, "stroke_hz": 1.0} for index in range(7)]
+    analysis = analyze_video(video, fake_pose_factory(swimmers), None, AT_10HZ)
+    first_segment = analysis["keyframeSegments"][0]
+    assert analysis["metadata"]["persons"] == 7
+    assert {person["id"] for person in first_segment["keyframes"][0]["persons"]} == {person["id"] for person in analysis["people"]}
 
 
 def test_no_person_raises(video_factory, fake_pose_factory):
@@ -167,7 +180,7 @@ def test_keyframes_contract(video_factory, fake_pose_factory):
     video = video_factory(frames=300, fps=30.0)
     pose = fake_pose_factory([{"start_x": 120.0, "start_y": 120.0, "speed": 20.0, "stroke_hz": 1.0}])
     analysis = analyze_video(video, pose, None, AT_10HZ)
-    keyframes = analysis["keyframes"]
+    keyframes = all_keyframes(analysis)
     assert keyframes, "keyframes não podem ficar vazios com atleta rastreado"
     times = [frame["t"] for frame in keyframes]
     assert times == sorted(times)
@@ -182,10 +195,13 @@ def test_keyframes_contract(video_factory, fake_pose_factory):
     assert first[0] == pytest.approx(120.0, abs=8.0)
 
 
-def test_keyframes_are_capped(video_factory, fake_pose_factory):
+def test_long_video_keeps_all_keyframes_in_temporal_segments(video_factory, fake_pose_factory):
     video = video_factory(frames=4200, fps=30.0)  # 140 s: 700 amostras a 5 Hz > cap
     pose = fake_pose_factory([{"start_x": 120.0, "start_y": 120.0, "speed": 4.0, "stroke_hz": 1.0}])
     analysis = analyze_video(video, pose, None, AT_10HZ)
-    assert len(analysis["keyframes"]) <= KEYFRAME_OUTPUT_CAP
-    assert analysis["metadata"]["keyframesTruncatedAt"] == analysis["keyframes"][-1]["t"]
-    assert analysis["metadata"]["keyframesTruncatedAt"] < analysis["metadata"]["durationSeconds"]
+    segments = analysis["keyframeSegments"]
+    frames = [frame for segment in segments for frame in segment["keyframes"]]
+    assert len(frames) > 600
+    assert segments[0]["from"] == 0
+    assert frames[-1]["t"] >= analysis["metadata"]["durationSeconds"] - 0.5
+    assert analysis["metadata"]["keyframesTruncatedAt"] is None

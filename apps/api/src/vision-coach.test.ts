@@ -121,6 +121,12 @@ describe("buildLiveWindowContext", () => {
     const context = buildLiveWindowContext({ ...analysis, metadata: { ...analysis.metadata, keyframesTruncatedAt: 5 } }, 9, 2);
     expect(context).toContain("a pose sincronizada não cobre este trecho");
   });
+
+  it("lê a evidência segmentada na janela ao vivo", () => {
+    const context = buildLiveWindowContext({ ...analysis, keyframes: undefined, keyframeSegments: [{ from: 0, to: 10, count: analysis.keyframes!.length, keyframes: analysis.keyframes! }] }, 4.2, 4);
+    expect(context).toContain("ATLETAS NO QUADRO AGORA");
+    expect(context).toContain("Atleta #7");
+  });
 });
 
 describe("rotas do treinador de visão", () => {

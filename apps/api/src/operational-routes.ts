@@ -29,6 +29,32 @@ const importAliases: Record<string, string> = {
 const normalizeImportKey = (key: string) => key.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 const canonicalizeImportRow = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).map(([key, value]) => [importAliases[normalizeImportKey(key)] ?? key, value]));
 
+type Keyframe = { t: number; persons: Array<{ id: number; kpts: number[][] }> };
+type KeyframeSegment = { from: number; to: number; count: number; keyframes: Keyframe[] };
+
+function withoutKeyframeEvidence(record: Record<string, unknown>) {
+  const analysis = record.analysis as Record<string, unknown> | undefined;
+  if (!analysis) return record;
+  const { keyframes: _legacyKeyframes, keyframeSegments, ...summary } = analysis;
+  const segments = Array.isArray(keyframeSegments) ? keyframeSegments.map((segment) => {
+    const { keyframes: _frames, ...index } = segment as KeyframeSegment;
+    return index;
+  }) : undefined;
+  return { ...record, analysis: { ...summary, ...(segments ? { keyframeSegments: segments } : {}) } };
+}
+
+function keyframesInWindow(analysis: Record<string, unknown>, from: number, to: number): Keyframe[] {
+  const segments = analysis.keyframeSegments;
+  if (Array.isArray(segments)) {
+    return segments.flatMap((segment) => {
+      const item = segment as KeyframeSegment;
+      return item.to >= from && item.from <= to ? item.keyframes : [];
+    }).filter((frame) => frame.t >= from && frame.t <= to);
+  }
+  // Análises anteriores persistiam um único vetor; leia-o sem exigir migração.
+  return Array.isArray(analysis.keyframes) ? (analysis.keyframes as Keyframe[]).filter((frame) => frame.t >= from && frame.t <= to) : [];
+}
+
 export function registerOperationalRoutes(app: FastifyInstance, store: ManagedStore, videoQueue?: VideoAnalysisQueue) {
   const protectedKinds = ["ingestions", "prescriptions", "results", "loadSnapshots", "adaptationDecisions", "governance", "users", "authSessions", "videoAnalysisJobs", "invitations"];
   app.get("/api/v1/events", async (request, reply) => {
@@ -75,7 +101,8 @@ export function registerOperationalRoutes(app: FastifyInstance, store: ManagedSt
     const query = z.object({ q: z.string().trim().default(""), offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(request.query);
     const all = store.list(parsed.data).filter((item) => item.organizationId === user!.organizationId);
     const filtered = query.q ? all.filter((item) => JSON.stringify(item).toLowerCase().includes(query.q.toLowerCase())) : all;
-    return { data: filtered.slice(query.offset, query.offset + query.limit), total: filtered.length, offset: query.offset, limit: query.limit };
+    const data = filtered.slice(query.offset, query.offset + query.limit).map((record) => parsed.data === "videos" ? withoutKeyframeEvidence(record) : record);
+    return { data, total: filtered.length, offset: query.offset, limit: query.limit };
   });
   app.get("/api/v1/manage/:kind/:id", async (request, reply) => {
     const user = await getSession(sessionToken(request));
@@ -84,7 +111,7 @@ export function registerOperationalRoutes(app: FastifyInstance, store: ManagedSt
     if (!params.success) return reply.code(404).send({ error: "Registro inválido" });
     if (["users", "authSessions"].includes(params.data.kind)) return reply.code(403).send({ error: "Dados de credenciais não podem ser consultados pelo CRUD genérico" });
     const record = store.get(params.data.kind, params.data.id);
-    return record && record.organizationId === user!.organizationId ? reply.send(record) : reply.code(404).send({ error: "Registro não encontrado" });
+    return record && record.organizationId === user!.organizationId ? reply.send(params.data.kind === "videos" ? withoutKeyframeEvidence(record) : record) : reply.code(404).send({ error: "Registro não encontrado" });
   });
   app.post("/api/v1/manage/:kind", async (request, reply) => {
     const kind = kindSchema.safeParse((request.params as { kind?: string }).kind);
@@ -323,6 +350,19 @@ export function registerOperationalRoutes(app: FastifyInstance, store: ManagedSt
     if (!record || record.organizationId !== user!.organizationId || (user!.role === "athlete" && !athleteMayAccess(user, String(record.athleteId ?? "")))) return reply.code(404).send({ error: "Vídeo não encontrado" });
     const job = store.list("videoAnalysisJobs").find((item) => item.videoId === params.id && ["queued", "running"].includes(String(item.status))) ?? store.list("videoAnalysisJobs").find((item) => item.videoId === params.id);
     return { video: record, job };
+  });
+
+  app.get("/api/v1/videos/:id/keyframes", async (request, reply) => {
+    const user = await getSession(sessionToken(request));
+    if (!roleAllows(user, ["coach", "admin", "athlete"])) return reply.code(user ? 403 : 401).send({ error: user ? "Ação não autorizada" : "Autenticação necessária" });
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const query = z.object({ from: z.coerce.number().nonnegative(), to: z.coerce.number().nonnegative() }).safeParse(request.query);
+    if (!query.success || query.data.to < query.data.from || query.data.to - query.data.from > 30) return reply.code(400).send({ error: "Janela de poses inválida (máximo de 30 s)." });
+    const record = store.get("videos", params.id);
+    if (!record || record.organizationId !== user!.organizationId || (user!.role === "athlete" && !athleteMayAccess(user!, String(record.athleteId ?? "")))) return reply.code(404).send({ error: "Vídeo não encontrado" });
+    const analysis = record.analysis as Record<string, unknown> | undefined;
+    if (!analysis) return reply.code(404).send({ error: "Análise de vídeo não encontrada" });
+    return { from: query.data.from, to: query.data.to, keyframes: keyframesInWindow(analysis, query.data.from, query.data.to) };
   });
 
   app.post("/api/v1/videos/:id/analyze", async (request, reply) => {

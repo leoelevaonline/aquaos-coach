@@ -139,18 +139,19 @@ export function LiveAnalysis({ initialSourceUrl }: { initialSourceUrl?: string }
 }
 
 /** Camada compacta usada dentro do modal de revisão: esqueleto sobre o vídeo do acervo. */
-export function PoseTrackingLayer({ videoRef, active, numPoses = 1, serverKeyframes, serverPersonIds = [], selectedPersonId = null, coverageEndsAt = null }: {
+export function PoseTrackingLayer({ videoRef, active, numPoses = 1, serverKeyframes, serverTrackingAvailable = false, serverPersonIds = [], selectedPersonId = null, coverageEndsAt = null }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   active: boolean;
   numPoses?: number;
   serverKeyframes?: TrackedKeyframe[];
+  serverTrackingAvailable?: boolean;
   serverPersonIds?: number[];
   selectedPersonId?: number | null;
   coverageEndsAt?: number | null;
 }) {
   // Fonte prioritária: keyframes do AquaVision (servidor) quando a análise os
   // traz; sem eles, rastreamento MediaPipe no próprio navegador.
-  if (serverKeyframes?.length) return <ServerTrackingLayer videoRef={videoRef} active={active} keyframes={serverKeyframes} personIds={serverPersonIds} selectedId={selectedPersonId} coverageEndsAt={coverageEndsAt} />;
+  if (serverTrackingAvailable || serverKeyframes?.length) return <ServerTrackingLayer videoRef={videoRef} active={active} keyframes={serverKeyframes ?? []} personIds={serverPersonIds} selectedId={selectedPersonId} coverageEndsAt={coverageEndsAt} />;
   return <BrowserTrackingLayer videoRef={videoRef} active={active} numPoses={numPoses} />;
 }
 
