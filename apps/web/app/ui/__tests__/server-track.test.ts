@@ -26,17 +26,26 @@ describe("poseAtTime", () => {
     expect(poseAtTime(keyframes, 99)).toEqual([]);
   });
 
-  it("some com o atleta perdido durante uma lacuna longa e o traz de volta perto da reentrada", () => {
+  it("não preenche lacunas longas e mostra somente amostras próximas das extremidades", () => {
     const withGap: TrackedKeyframe[] = [
       { t: 0, persons: [{ id: 1, kpts: kpts(10, 10) }, { id: 2, kpts: kpts(50, 10) }] },
       { t: 4, persons: [{ id: 1, kpts: kpts(20, 10) }] },
       { t: 8, persons: [{ id: 1, kpts: kpts(30, 10) }, { id: 2, kpts: kpts(90, 10) }] },
     ];
-    // Atleta 2 tem amostra em t=0 e t=8; em t=2 (2 s depois da última) ele não deve congelar.
-    expect(poseAtTime(withGap, 2).map((person) => person.id)).toEqual([1]);
-    expect(poseAtTime(withGap, 6).map((person) => person.id)).toEqual([1]);
+    expect(poseAtTime(withGap, 2)).toEqual([]);
+    expect(poseAtTime(withGap, 6)).toEqual([]);
     // Logo antes da reentrada ele reaparece.
     expect(poseAtTime(withGap, 7.7).map((person) => person.id).sort()).toEqual([1, 2]);
+  });
+
+  it("não interpola o mesmo atleta através de uma lacuna longa", () => {
+    const withLongGap: TrackedKeyframe[] = [
+      { t: 0, persons: [{ id: 1, kpts: kpts(10, 10) }] },
+      { t: 10, persons: [{ id: 1, kpts: kpts(90, 10) }] },
+    ];
+    expect(poseAtTime(withLongGap, 0)[0].kpts[0][0]).toBe(10);
+    expect(poseAtTime(withLongGap, 5)).toEqual([]);
+    expect(poseAtTime(withLongGap, 10)[0].kpts[0][0]).toBe(90);
   });
 
   it("mantém o atleta presente em um só lado quando a lacuna é curta", () => {

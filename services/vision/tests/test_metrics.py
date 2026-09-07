@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from app.calibration import CalibrationPoint, build_calibration
-from app.metrics import compute_track_metrics, motion_timeline, normalize_motion
+from app.metrics import compute_track_metrics, distance_per_stroke_from_segments, motion_timeline, normalize_motion
 from app.strokes import StrokeStats
 
 SQUARE = [
@@ -66,6 +66,29 @@ def test_distance_per_stroke_requires_measured_cadence():
         times, points, calibration=None, stroke_stats=StrokeStats(1, 0.0, 0.0, []), tracked_frames=100, pose_frames=100
     )
     assert single.distance_per_stroke == 0.0
+
+
+def test_metrics_do_not_cross_unobserved_gaps():
+    times = np.array([0.0, 0.1, 0.2, 10.0, 10.1, 10.2])
+    points = np.array([[0.0, 0.0], [10.0, 0.0], [20.0, 0.0], [1000.0, 0.0], [1010.0, 0.0], [1020.0, 0.0]])
+    metrics = compute_track_metrics(
+        times, points, calibration=None, stroke_stats=StrokeStats(0, 0.0, 0.0, []), tracked_frames=120, pose_frames=6
+    )
+    assert metrics.duration_seconds == 10.2
+    assert metrics.observed_duration_seconds == 0.4
+    assert metrics.observed_segments == 2
+    assert metrics.distance == 40.0
+    assert metrics.avg_speed == pytest.approx(100.0)
+    assert metrics.max_speed == pytest.approx(100.0)
+
+
+def test_distance_per_stroke_uses_only_cycle_intervals_with_observed_path():
+    trajectories = [
+        (np.array([0.0, 1.0, 2.0]), np.array([[0.0, 0.0], [10.0, 0.0], [20.0, 0.0]])),
+        (np.array([10.0, 11.0, 12.0]), np.array([[1000.0, 0.0], [1010.0, 0.0], [1020.0, 0.0]])),
+    ]
+    result = distance_per_stroke_from_segments(trajectories, [[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]], None)
+    assert result == pytest.approx(10.0)
 
 
 def test_normalize_motion_uses_p95_as_ceiling():

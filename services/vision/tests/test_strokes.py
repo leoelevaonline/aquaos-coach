@@ -10,6 +10,7 @@ from app.strokes import (
     robust_intervals,
     select_stroke_signal,
     stroke_statistics,
+    stroke_statistics_for_segments,
 )
 
 
@@ -53,6 +54,20 @@ def test_flat_signal_has_no_strokes():
     times = grid()
     assert detect_peaks_hysteresis(times, np.zeros_like(times)) == []
     assert stroke_statistics([]).count == 0
+
+
+def test_cadence_requires_two_valid_intervals():
+    stats = stroke_statistics([0.0, 1.0])
+    assert stats.intervals == [1.0]
+    assert stats.rate_per_minute == 0.0
+    assert stats.consistency == 0.0
+
+
+def test_statistics_never_join_cycles_across_segments():
+    stats = stroke_statistics_for_segments([[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]])
+    assert stats.intervals == [1.0, 1.0, 1.0, 1.0]
+    assert 8.0 not in stats.intervals
+    assert stats.rate_per_minute == pytest.approx(60.0)
 
 
 def test_robust_intervals_drop_outliers():

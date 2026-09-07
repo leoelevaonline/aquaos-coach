@@ -25,6 +25,8 @@ export const TRACK_COLORS = ["#22d3ee", "#34d399", "#fbbf24", "#f472b6", "#a78bf
 const KEYPOINT_VISIBLE = 0.3;
 /** Sem amostra do atleta por mais que isto, o esqueleto sai da tela em vez de congelar. */
 export const MAX_HOLD_SECONDS = 0.5;
+/** Lacunas maiores não têm evidência suficiente para interpolar uma pose. */
+export const MAX_INTERPOLATION_GAP_SECONDS = 1;
 
 /** Cor estável por identidade de atleta, na ordem em que a análise lista `people`. */
 export function trackColor(personId: number, personIds: number[]): string {
@@ -34,9 +36,8 @@ export function trackColor(personId: number, personIds: number[]): string {
 
 /**
  * Estado da pose no instante t: interpola linearmente entre keyframes por
- * atleta. Um atleta só aparece se tem amostra dos dois lados de t (ou a
- * amostra mais próxima está a menos de MAX_HOLD_SECONDS): quem foi perdido
- * pelo rastreio desaparece em vez de ficar parado no último ponto.
+ * atleta apenas em trechos contínuos. Em lacunas longas, só mostra amostras
+ * próximas às extremidades e nunca inventa uma pose no intervalo sem evidência.
  */
 export function poseAtTime(keyframes: TrackedKeyframe[], t: number): PoseAtTime {
   if (!keyframes.length) return [];
@@ -55,6 +56,16 @@ export function poseAtTime(keyframes: TrackedKeyframe[], t: number): PoseAtTime 
   }
   const span = next.t - previous.t;
   if (span <= 0) return previous.persons;
+  if (span > MAX_INTERPOLATION_GAP_SECONDS) {
+    const nearby = new Map<number, PoseAtTime[number]>();
+    for (const person of previous.persons) {
+      if (t - previous.t <= MAX_HOLD_SECONDS) nearby.set(person.id, person);
+    }
+    for (const person of next.persons) {
+      if (next.t - t <= MAX_HOLD_SECONDS) nearby.set(person.id, person);
+    }
+    return [...nearby.values()];
+  }
   const ratio = (t - previous.t) / span;
   const nextById = new Map(next.persons.map((person) => [person.id, person]));
   const result: PoseAtTime = [];

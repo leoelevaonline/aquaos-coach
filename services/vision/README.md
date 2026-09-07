@@ -21,12 +21,15 @@ recebem o ID definitivo do atleta nos keyframes (`people[].idAliases` lista os
 IDs brutos). Quando o vídeo excede o limite de amostras,
 `metadata.keyframesTruncatedAt` informa até que instante há pose sincronizada.
 
-Cada entrada de `people` traz `gaps` (intervalos sem rastreio) e `validity`
-por métrica (`measured`, `unavailable`, `uncalibrated`): cadência e distância
-por braçada só são `measured` com pelo menos dois intervalos válidos;
-velocidade e distância só saem de `uncalibrated` com homografia. Eventos de
-braçada são emitidos por atleta (`events[].personId`); não há eventos de fase
-sintéticos nem índice técnico.
+Cada entrada de `people` traz `gaps`, `observedDurationSeconds`,
+`observedSegments` e `validity` por métrica. Distância, velocidade, ciclos e
+distância por ciclo são calculados somente dentro de trechos observados.
+Cadência exige dois intervalos válidos e consistência rítmica exige três.
+
+`maxSpeed` é a maior velocidade derivada da trajetória suavizada; o p95 é usado
+somente para normalizar o gráfico de movimento. A `confidence` de eventos é
+`heuristic_signal_quality`: qualidade do sinal, nunca probabilidade de acerto.
+Velocidade e distância só saem de `uncalibrated` com homografia.
 
 ## Rodar
 

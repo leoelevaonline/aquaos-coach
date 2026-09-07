@@ -60,9 +60,27 @@ export async function resolveVisionAssets(model: ModelTier): Promise<{ wasm: str
 
 export type PoseProcessResult = { time: number; athletes: TrackedAthlete[]; inferenceMs: number };
 
+export type PoseProcessTimes = {
+  mediaPipeTimeMs: number;
+  videoTimeMs: number;
+};
+
+export const MAX_VIDEO_TIMELINE_GAP_MS = 1_000;
+
+export function hasNewVideoFrame(previousVideoTimeMs: number | null, videoTimeMs: number): boolean {
+  return previousVideoTimeMs === null || videoTimeMs !== previousVideoTimeMs;
+}
+
+/** Saltos invalidam a janela histórica usada pelas métricas do atleta. */
+export function isVideoTimelineDiscontinuity(previousVideoTimeMs: number | null, videoTimeMs: number): boolean {
+  return previousVideoTimeMs !== null
+    && (videoTimeMs < previousVideoTimeMs || videoTimeMs - previousVideoTimeMs > MAX_VIDEO_TIMELINE_GAP_MS);
+}
+
 export type PoseSession = {
-  /** Detecta e rastreia no quadro atual. Retorna null se o quadro já foi visto. */
-  process: (video: HTMLVideoElement, timeMs: number) => Promise<PoseProcessResult | null>;
+  /** Detecta e rastreia um novo quadro do vídeo. */
+  process: (video: HTMLVideoElement, times: PoseProcessTimes) => Promise<PoseProcessResult | null>;
+  reset: () => void;
   close: () => Promise<void>;
 };
 
@@ -110,18 +128,27 @@ export async function createPoseSession(options: PoseSessionOptions = {}): Promi
   }
 
   const tracker = new PoseTracker({ maxTracks: numPoses });
-  let lastTimestamp = -1;
+  let lastMediaPipeTimestamp = -1;
+  let lastVideoTimeMs: number | null = null;
 
   return {
-    async process(video, timeMs) {
-      // MediaPipe exige timestamps estritamente crescentes e quadros novos.
-      if (video.readyState < 2 || timeMs <= lastTimestamp) return null;
-      lastTimestamp = timeMs;
+    async process(video, { mediaPipeTimeMs, videoTimeMs }) {
+      if (video.readyState < 2 || !hasNewVideoFrame(lastVideoTimeMs, videoTimeMs)) return null;
+      if (isVideoTimelineDiscontinuity(lastVideoTimeMs, videoTimeMs)) tracker.reset();
+      lastVideoTimeMs = videoTimeMs;
+
+      // O MediaPipe exige tempo crescente mesmo depois de um seek no conteúdo.
+      const timestamp = Math.max(mediaPipeTimeMs, lastMediaPipeTimestamp + 0.001);
+      lastMediaPipeTimestamp = timestamp;
       const started = performance.now();
-      const result = landmarker.detectForVideo(video, timeMs);
+      const result = landmarker.detectForVideo(video, timestamp);
       const inferenceMs = Math.round((performance.now() - started) * 10) / 10;
-      const athletes = tracker.update(timeMs, (result.landmarks ?? []) as Landmark[][]);
-      return { time: timeMs, athletes, inferenceMs };
+      const athletes = tracker.update(videoTimeMs, (result.landmarks ?? []) as Landmark[][]);
+      return { time: videoTimeMs, athletes, inferenceMs };
+    },
+    reset() {
+      tracker.reset();
+      lastVideoTimeMs = null;
     },
     async close() {
       tracker.reset();
