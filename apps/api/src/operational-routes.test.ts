@@ -77,6 +77,26 @@ describe("uploads e importações operacionais", () => {
     expect((await app.inject({ method: "GET", url: "/api/v1/manage/videos" })).statusCode).toBe(401);
   });
 
+  it("registra associação manual por track como evento imutável e supersede a anterior", async () => {
+    const video = store.create("videos", { title: "Raia múltipla", organizationId: "org-demo", analysis: { people: [{ id: 7 }] } });
+    const first = await app.inject({ method: "POST", url: `/api/v1/videos/${video.id}/tracks/7/assignments`, headers: { cookie }, payload: { athleteId: "ana-souza", reason: "Conferência manual da raia" } });
+    expect(first.statusCode).toBe(201);
+    const corrected = await app.inject({ method: "POST", url: `/api/v1/videos/${video.id}/tracks/7/assignments`, headers: { cookie }, payload: { athleteId: "caio-martins", reason: "Correção após nova revisão" } });
+    expect(corrected.statusCode).toBe(201);
+    expect(corrected.json()).toMatchObject({ athleteId: "caio-martins", supersedesAssignmentId: first.json().id, eventName: "video.track.assignment.recorded" });
+    const history = await app.inject({ method: "GET", url: `/api/v1/videos/${video.id}/track-assignments`, headers: { cookie } });
+    expect(history.json()).toMatchObject({ currentByTrack: { "7": { athleteId: "caio-martins" } } });
+    expect(history.json().assignments).toHaveLength(2);
+    expect(store.get("trackAssignments", first.json().id)).toMatchObject({ athleteId: "ana-souza" });
+  });
+
+  it("não aceita associar track ausente ou atleta de outra organização", async () => {
+    const video = store.create("videos", { title: "Track isolado", organizationId: "org-demo", analysis: { people: [{ id: 8 }] } });
+    store.create("athletes", { id: "atleta-externo", name: "Outra organização", organizationId: "org-externa" });
+    expect((await app.inject({ method: "POST", url: `/api/v1/videos/${video.id}/tracks/9/assignments`, headers: { cookie }, payload: { athleteId: "ana-souza", reason: "Teste manual" } })).statusCode).toBe(422);
+    expect((await app.inject({ method: "POST", url: `/api/v1/videos/${video.id}/tracks/8/assignments`, headers: { cookie }, payload: { athleteId: "atleta-externo", reason: "Teste manual" } })).statusCode).toBe(404);
+  });
+
   it("aceita ZIP documental seguro e persiste o relatório de extração", async () => {
     const zip = new JSZip();
     zip.file("biblioteca/sessao.txt", "8x100 livre A2");

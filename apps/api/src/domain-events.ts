@@ -16,6 +16,7 @@ export type DomainEventName =
   | "training.ingestion.reviewed" | "training.ingestion.corrected"
   | "training.ingestion.confirmed" | "training.ingestion.assigned"
   | "training.ingestion.committed" | "training.ingestion.failed"
+  | "video.track.assignment.recorded"
   | "session.executed" | "session.result.recorded"
   | "load.layers.calculated" | "load.snapshot.committed"
   | "readiness.assessed" | "adaptation.decided"
@@ -54,6 +55,7 @@ export const DOMAIN_EVENT_CONTRACTS: DomainEventContract[] = [
   { name: "training.ingestion.assigned", version: "v1", actor: "coach", payload: ["ingestionId", "targetType"] },
   { name: "training.ingestion.committed", version: "v1", actor: "system", payload: ["ingestionId", "fromState", "toState"] },
   { name: "training.ingestion.failed", version: "v1", actor: "system", payload: ["ingestionId", "reason"] },
+  { name: "video.track.assignment.recorded", version: "v1", actor: "coach", payload: ["videoId", "trackId", "organizationId", "assignmentId"] },
   { name: "session.executed", version: "v1", actor: "athlete", payload: ["athleteId", "date", "durationMinutes"] },
   { name: "session.result.recorded", version: "v1", actor: "athlete", payload: ["athleteId", "resultId"] },
   { name: "load.layers.calculated", version: "v1", actor: "system", payload: ["athleteId", "internalLoadUa"] },
