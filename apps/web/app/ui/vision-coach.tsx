@@ -26,14 +26,30 @@ export function VisionCoachPanel({ videoId, hasAnalysis, playing, currentTime, s
 }) {
   const [report, setReport] = useState("");
   const [reportBusy, setReportBusy] = useState(false);
-  const [live, setLive] = useState(false);
+  const [liveVideoId, setLiveVideoId] = useState<string | null>(null);
+  const live = liveVideoId === videoId;
   const [notes, setNotes] = useState<LiveNote[]>([]);
   const [error, setError] = useState("");
-  const busyRef = useRef(false);
+  const reportController = useRef<AbortController | null>(null);
   const timeRef = useRef(currentTime);
   timeRef.current = currentTime;
 
+  useEffect(() => {
+    setReport("");
+    setReportBusy(false);
+    setLiveVideoId(null);
+    setNotes([]);
+    setError("");
+    return () => {
+      reportController.current?.abort();
+      reportController.current = null;
+    };
+  }, [videoId]);
+
   const requestReport = async () => {
+    reportController.current?.abort();
+    const controller = new AbortController();
+    reportController.current = controller;
     setReportBusy(true);
     setError("");
     try {
@@ -41,37 +57,47 @@ export function VisionCoachPanel({ videoId, hasAnalysis, playing, currentTime, s
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ videoId }),
+        signal: controller.signal,
       });
-      setReport(response.reply);
+      if (!controller.signal.aborted) setReport(response.reply);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Não foi possível gerar o relatório do treinador.");
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Não foi possível gerar o relatório do treinador.");
     } finally {
-      setReportBusy(false);
+      if (reportController.current === controller) {
+        reportController.current = null;
+        setReportBusy(false);
+      }
     }
   };
 
   useEffect(() => {
     if (!live || !playing || !hasAnalysis) return;
+    let cancelled = false;
+    let controller: AbortController | null = null;
     const tick = async () => {
-      if (busyRef.current) return;
-      busyRef.current = true;
+      if (controller || cancelled) return;
+      controller = new AbortController();
+      const signal = controller.signal;
+      const requestedTime = timeRef.current;
       try {
         const response = await apiRequest<{ reply: string }>("/api/v1/ai/vision-coach/live", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ videoId, currentTime: timeRef.current, windowSeconds: LIVE_WINDOW_SECONDS }),
+          body: JSON.stringify({ videoId, currentTime: requestedTime, windowSeconds: LIVE_WINDOW_SECONDS }),
+          signal,
         });
-        setNotes((current) => [{ t: timeRef.current, text: response.reply }, ...current].slice(0, LIVE_NOTES_LIMIT));
+        if (!cancelled) setNotes((current) => [{ t: requestedTime, text: response.reply }, ...current].slice(0, LIVE_NOTES_LIMIT));
       } catch (cause) {
+        if (cancelled) return;
         setError(cause instanceof Error ? cause.message : "A análise ao vivo foi interrompida.");
-        setLive(false);
+        setLiveVideoId(null);
       } finally {
-        busyRef.current = false;
+        controller = null;
       }
     };
     void tick();
     const timer = window.setInterval(() => void tick(), LIVE_INTERVAL_MS);
-    return () => window.clearInterval(timer);
+    return () => { cancelled = true; controller?.abort(); window.clearInterval(timer); };
   }, [live, playing, hasAnalysis, videoId]);
 
   return <div className="vision-coach">
@@ -79,8 +105,8 @@ export function VisionCoachPanel({ videoId, hasAnalysis, playing, currentTime, s
       <button type="button" className="marker-ai-button" disabled={reportBusy || !hasAnalysis} onClick={() => void requestReport()}>
         <Sparkles size={14} />{reportBusy ? "Analisando o vídeo…" : "Relatório do treinador"}
       </button>
-      <button type="button" className={`marker-ai-button ${live ? "active" : ""}`} disabled={!hasAnalysis} aria-pressed={live} onClick={() => { setError(""); setLive((value) => !value); }}>
-        <Radio size={14} />{live ? (playing ? "Ao vivo · comentando" : "Ao vivo · pause para retomar") : "Análise ao vivo"}
+      <button type="button" className={`marker-ai-button ${live ? "active" : ""}`} disabled={!hasAnalysis} aria-pressed={live} onClick={() => { setError(""); setLiveVideoId(live ? null : videoId); }}>
+        <Radio size={14} />{live ? (playing ? "Ao vivo · comentando" : "Ao vivo · reproduza para retomar") : "Análise ao vivo"}
       </button>
       {engine ? <em className="coach-engine">IA sobre {engine}</em> : null}
     </div>

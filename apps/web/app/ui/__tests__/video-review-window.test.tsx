@@ -1,5 +1,5 @@
-import { render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { VideoReview } from "../modals";
 
 const apiRequest = vi.fn();
@@ -11,6 +11,8 @@ vi.mock("../api", () => ({
   uploadFile: vi.fn(),
 }));
 
+beforeAll(() => { vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null); });
+afterAll(() => vi.restoreAllMocks());
 afterEach(() => apiRequest.mockReset());
 
 describe("VideoReview", () => {
@@ -20,6 +22,7 @@ describe("VideoReview", () => {
         return Promise.resolve({ assignments: [], currentByTrack: {}, athletes: [] });
       }
       if (path.includes("/keyframes?")) return Promise.resolve({ keyframes: [{ t: 0, persons: [{ id: 1, kpts: [[1, 2, .9]] }] }] });
+      if (path.startsWith("/api/v1/manage/videos?")) return Promise.resolve({data:[]});
       if (path !== "/api/v1/manage/videos/video-janela") throw new Error(`Unexpected request: ${path}`);
       return Promise.resolve({
         id: "video-janela",
@@ -34,6 +37,8 @@ describe("VideoReview", () => {
       });
     });
     render(<VideoReview videoId="video-janela" onClose={() => undefined} onSave={() => undefined} />);
+    fireEvent.click(await screen.findByRole("tab", {name:"Medições"}));
+    fireEvent.click(await screen.findByLabelText("Exibir rastreamento disponível"));
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/api/v1/videos/video-janela/keyframes?from=0&to=5"));
   });
 });

@@ -52,12 +52,12 @@ describe("agenda de treinos", () => {
     mockedApi.mockResolvedValue({ data: [] });
     const onCreate = vi.fn();
     const { container } = render(<Practices onCreate={onCreate} onNotify={() => undefined} />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Dia", exact: true })[0]);
-    fireEvent.click(await screen.findByRole("button", { name: "Próximo dia", exact: true }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Dia" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Próximo dia" }));
     expect(container.querySelectorAll(".day-column")).toHaveLength(1);
     fireEvent.click(await screen.findByRole("button", { name: "Planejar QUA, 02 de setembro" }));
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ scheduledAt: "2026-09-02T08:00" }));
-    fireEvent.click(screen.getByRole("button", { name: "Dia anterior", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Dia anterior" }));
     expect(await screen.findByRole("button", { name: "Planejar TER, 01 de setembro" })).toBeInTheDocument();
   });
 });

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 
 test('novas áreas do treinador e edição de protocolo em desktop/mobile', async ({ page }, testInfo) => {
   const resources: Record<string, Array<Record<string, unknown>>> = {
@@ -53,7 +54,7 @@ test('novas áreas do treinador e edição de protocolo em desktop/mobile', asyn
   expect(errors).toEqual([]);
 });
 
-test('revisão técnica salva desenhos, compara vídeos e navega por quadros', async ({ page }) => {
+test('abrir análise leva ao estúdio e salva desenhos, notas e comparação', async ({ page }, testInfo) => {
   const video: Record<string, unknown> = {id:'video-test',title:'Vídeo de validação',url:'/fixture.webm'};
   await page.route('**/api/v1/**', async route => {
     const path=new URL(route.request().url()).pathname;
@@ -65,12 +66,12 @@ test('revisão técnica salva desenhos, compara vídeos e navega por quadros', a
     else if(path.endsWith('/manage/videos/video-test')) {
       if(route.request().method()==='PATCH') Object.assign(video,route.request().postDataJSON());
       json=video;
-    } else if(path.endsWith('/manage/videos')) json={data:[video],total:1};
+    } else if(path.endsWith('/manage/videos')) json={data:[video,{id:'comparison',title:'Vídeo comparativo',url:'/fixture.webm'}],total:2};
     await route.fulfill({json});
   });
   await page.goto('/pt/coach/videos');
   // Generate a real, synthetic, browser-encoded video: no athlete files or external requests.
-  const base64=await page.evaluate(async()=>{
+  const base64=process.env.VIDEO_REVIEW_FIXTURE ? readFileSync(process.env.VIDEO_REVIEW_FIXTURE).toString('base64') : await page.evaluate(async()=>{
     const canvas=document.createElement('canvas');canvas.width=320;canvas.height=180;
     const context=canvas.getContext('2d')!; context.fillStyle='#164675';context.fillRect(0,0,320,180);
     const stream=canvas.captureStream(30), recorder=new MediaRecorder(stream,{mimeType:'video/webm'});
@@ -80,26 +81,39 @@ test('revisão técnica salva desenhos, compara vídeos e navega por quadros', a
       resolve(btoa(Array.from(bytes,b=>String.fromCharCode(b)).join('')));stream.getTracks().forEach(t=>t.stop());
     });recorder.start();setTimeout(()=>recorder.stop(),400);return result;
   });
-  await page.route('**/fixture.webm',route=>route.fulfill({body:Buffer.from(base64,'base64'),contentType:'video/webm'}));
-  await page.getByRole('button',{name:'Abrir ferramentas',exact:true}).click();
-  await page.getByLabel('Vídeo principal').selectOption('video-test');
-  const primary=page.locator('.coach-video-stage video');
+  await page.route('**/fixture.webm',route=>{
+    const bytes=Buffer.from(base64,'base64');const range=route.request().headers().range?.match(/bytes=(\d+)-(\d*)/);
+    const start=range?Number(range[1]):0,end=range&&range[2]?Math.min(Number(range[2]),bytes.length-1):bytes.length-1;
+    return route.fulfill({status:range?206:200,body:bytes.subarray(start,end+1),contentType:process.env.VIDEO_REVIEW_FIXTURE?'video/mp4':'video/webm',headers:{'accept-ranges':'bytes',...(range?{'content-range':`bytes ${start}-${end}/${bytes.length}`}:{})}});
+  });
+  await page.getByRole('button',{name:'Abrir análise'}).first().click();
+  await expect(page.getByRole('dialog',{name:'Revisão de vídeo'})).toBeVisible();
+  await expect(page.getByText('MOVIMENTO AGORA',{exact:true})).toHaveCount(0);
+  const primary=page.locator('.studio-frame video');
   await expect.poll(()=>primary.evaluate((el: HTMLVideoElement)=>el.readyState)).toBeGreaterThan(1);
-  await page.getByLabel('Comparar com').selectOption('video-test');
-  await expect(page.locator('.coach-video-grid video')).toHaveCount(2);
+  await page.getByLabel('Comparar com').selectOption('comparison');
+  await expect(page.locator('.studio-viewers video')).toHaveCount(2);
   await page.getByRole('combobox',{name:'Velocidade',exact:true}).selectOption('0.25');
   await expect.poll(()=>primary.evaluate((el: HTMLVideoElement)=>el.playbackRate)).toBe(0.25);
   await page.getByRole('button',{name:'Próximo quadro',exact:true}).click();
   await expect.poll(()=>primary.evaluate((el: HTMLVideoElement)=>el.currentTime)).toBeGreaterThan(0);
-  await page.getByRole('button',{name:'Linha (2 pontos)',exact:true}).click();
-  const overlay=page.locator('.coach-drawing');
+  await page.getByRole('button',{name:'Linha',exact:true}).click();
+  const overlay=page.locator('.studio-drawing');
   await overlay.click({position:{x:30,y:30}});await overlay.click({position:{x:100,y:80}});
   await expect(overlay.locator('polyline')).toHaveCount(1);
   await page.getByRole('button',{name:'Salvar revisão',exact:true}).click();
-  await expect(page.getByText('Desenhos e comentários salvos no vídeo.')).toBeVisible();
+  await expect(page.getByText('Revisão salva.',{exact:true})).toBeVisible();
   expect((video.coachReview as {drawings:unknown[]}).drawings).toHaveLength(1);
+  await page.getByRole('button',{name:'Virada',exact:true}).click();
+  await page.getByRole('textbox',{name:/Observação de Virada/}).fill('Aproximar os pés da parede e acelerar a saída.');
+  await page.getByLabel('Síntese para o atleta').fill('Prioridade: posição de saída da virada.');
+  await page.getByRole('button',{name:'Salvar revisão',exact:true}).click();
+  await expect(page.getByText('Revisão salva.',{exact:true})).toBeVisible();
+  await page.screenshot({path:`test-results/video-studio-${testInfo.project.name}.png`,fullPage:true});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.reload();
-  await page.getByRole('button',{name:'Abrir ferramentas',exact:true}).click();
-  await page.getByLabel('Vídeo principal').selectOption('video-test');
+  await page.getByRole('button',{name:'Abrir análise'}).first().click();
   await expect(page.getByRole('button',{name:/Desenho 1/})).toBeVisible();
+  await expect(page.getByRole('textbox',{name:/Observação de Virada/})).toHaveValue('Aproximar os pés da parede e acelerar a saída.');
+  await expect(page.getByLabel('Síntese para o atleta')).toHaveValue('Prioridade: posição de saída da virada.');
 });

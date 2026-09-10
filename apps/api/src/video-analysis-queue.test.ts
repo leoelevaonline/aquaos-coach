@@ -57,6 +57,54 @@ afterEach(() => {
 });
 
 describe("VideoAnalysisQueue", () => {
+  it.each(["completed", "failed"] as const)("preserva a revisão salva durante o processamento quando o job termina %s", async (outcome) => {
+    const { root, store, queue } = createQueue("aquaos-video-review-");
+    const video = store.create("videos", { filename: "treino.mp4", organizationId: "org-demo", status: "ready" });
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    analyzeWithVisionMock.mockResolvedValue({ kind: "fallback", fallbackReason: "service_unavailable", durationMs: 123 });
+    analyzeVideoMock.mockImplementation(async (_path, _thumbnail, progress) => {
+      await pending;
+      await progress?.(78, "Calculando periodicidade do movimento");
+      expect(store.get("videos", video.id)?.status).toBe("reviewed");
+      if (outcome === "failed") throw new Error("Falha no motor");
+      return fallbackAnalysis;
+    });
+
+    const { job } = queue.enqueue(video.id, "org-demo");
+    await vi.waitFor(() => expect(analyzeVideoMock).toHaveBeenCalledOnce());
+    expect(store.get("videos", video.id)?.status).toBe("processing");
+    const review = {
+      status: "reviewed",
+      feedback: "Manter alinhamento na saída da virada.",
+      coachReview: { version: 2, drawings: [{ id: "drawing-1", time: 2, type: "line", points: [[0.1, 0.2], [0.3, 0.4]] }], voice: [] },
+      manualEvents: [{ id: "marker-1", time: 2, category: "turn", label: "Virada" }],
+      reviewedAt: "2026-09-10T10:00:00.000Z",
+    };
+    store.update("videos", video.id, review);
+    finish();
+
+    await vi.waitFor(() => expect(store.get("videoAnalysisJobs", job.id)?.status).toBe(outcome));
+    expect(store.get("videos", video.id)).toMatchObject({ ...review, analysisStatus: outcome === "completed" ? "ready" : "failed" });
+    expect(new ManagedStore(join(root, "store.json")).get("videos", video.id)).toMatchObject(review);
+  });
+
+  it("mantém o estado revisado ao enfileirar e concluir uma nova análise", async () => {
+    const { store, queue } = createQueue("aquaos-video-reviewed-retry-");
+    const video = store.create("videos", { filename: "treino.mp4", organizationId: "org-demo", status: "reviewed", feedback: "Revisão aprovada" });
+    analyzeWithVisionMock.mockImplementation(async (_path, progress) => {
+      await progress?.(60, "Analisando movimento");
+      expect(store.get("videos", video.id)?.status).toBe("reviewed");
+      return { kind: "fallback", fallbackReason: "service_unavailable", durationMs: 123 };
+    });
+    analyzeVideoMock.mockResolvedValue(fallbackAnalysis);
+
+    const { job, video: queuedVideo } = queue.enqueue(video.id, "org-demo", true);
+    expect(queuedVideo.status).toBe("reviewed");
+    await vi.waitFor(() => expect(store.get("videoAnalysisJobs", job.id)?.status).toBe("completed"));
+    expect(store.get("videos", video.id)).toMatchObject({ status: "reviewed", feedback: "Revisão aprovada", analysisStatus: "ready" });
+  });
+
   it("persiste a tentativa de fallback sem caminho nem resposta bruta", async () => {
     const { store, queue } = createQueue("aquaos-vision-observability-");
     const job = store.create("videoAnalysisJobs", { id: "job-vision", videoId: "video-vision", organizationId: "org-demo", status: "queued", progress: 0, stage: "Aguardando" });

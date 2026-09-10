@@ -69,7 +69,7 @@ export class VideoAnalysisQueue {
       calibrationSnapshot: calibrationSnapshot ? structuredClone(calibrationSnapshot) : undefined,
     }) as VideoJob;
     this.store.update("videos", videoId, {
-      status: "processing",
+      status: this.videoStatus(videoId, "processing"),
       analysisStatus: "queued",
       analysisProgress: 0,
       analysisStage: "Aguardando processamento",
@@ -79,6 +79,12 @@ export class VideoAnalysisQueue {
     this.pending.push(job.id);
     void this.drain();
     return { video: this.store.get("videos", videoId) as VideoRecord, job };
+  }
+
+  private videoStatus(videoId: string, processingStatus: "processing" | "ready") {
+    // A revisão pertence ao treinador e pode ser salva enquanto o job aguarda
+    // um motor. Consulte o registro atual em cada escrita, não o estado inicial.
+    return this.store.get("videos", videoId)?.status === "reviewed" ? "reviewed" : processingStatus;
   }
 
   private async drain() {
@@ -105,7 +111,7 @@ export class VideoAnalysisQueue {
 
     const updateProgress = (progress: number, stage: string) => {
       this.store.update("videoAnalysisJobs", job.id, { status: "running", progress, stage, startedAt: job.startedAt ?? now() });
-      this.store.update("videos", video.id, { status: "processing", analysisStatus: "processing", analysisProgress: progress, analysisStage: stage, analysisJobId: job.id });
+      this.store.update("videos", video.id, { status: this.videoStatus(video.id, "processing"), analysisStatus: "processing", analysisProgress: progress, analysisStage: stage, analysisJobId: job.id });
     };
 
     try {
@@ -136,7 +142,7 @@ export class VideoAnalysisQueue {
         analysis = await analyzeVideo(videoPath, thumbnailPath, updateProgress);
       }
       const updated = this.store.update("videos", video.id, {
-        status: "ready",
+        status: this.videoStatus(video.id, "ready"),
         analysisStatus: "ready",
         analysisProgress: 100,
         analysisStage: "Análise concluída",
@@ -157,7 +163,7 @@ export class VideoAnalysisQueue {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha desconhecida na análise";
       this.store.update("videoAnalysisJobs", job.id, { status: "failed", stage: "Análise interrompida", error: message, completedAt: now() });
-      this.store.update("videos", video.id, { analysisStatus: "failed", status: "ready", analysisStage: "Análise interrompida", analysisError: message, analysisJobId: job.id });
+      this.store.update("videos", video.id, { analysisStatus: "failed", status: this.videoStatus(video.id, "ready"), analysisStage: "Análise interrompida", analysisError: message, analysisJobId: job.id });
       return undefined;
     }
   }
