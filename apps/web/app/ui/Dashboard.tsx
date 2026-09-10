@@ -17,23 +17,26 @@ import { ManagementCenter, type ManagementKind } from "./management";
 import type { WorkoutSeed } from "./workout-library-actions";
 import { AiAssistant } from "./ai-assistant";
 import { RkfOperations } from "./rkf-operations";
+import { LoadControl, DailyUpdates } from "./coach-panels";
+import { PerfectRace, Protocols, WorkoutEntry } from "./coach-planning";
 import { AuthGate, SKIP_DEMO_LOGIN_KEY } from "./auth-gate";
 import { apiRequest, subscribeToLiveEvents } from "./api";
 
-type Modal = "workout" | "invite" | "video" | "meet" | "command" | "manage" | "connection" | "live" | null;
+type Modal = "workout-entry" | "workout" | "invite" | "video" | "meet" | "command" | "manage" | "connection" | "live" | null;
 
 const routes: Record<AppView, string> = {
   today: "/pt/coach/today", athletes: "/pt/coach/athletes", practices: "/pt/coach/practices",
   seasons: "/pt/coach/seasons", videos: "/pt/coach/videos", analytics: "/pt/coach/analytics",
-  rkf: "/pt/coach/rkf", inbox: "/pt/coach/inbox", integrations: "/pt/coach/integrations", settings: "/pt/coach/settings",
+  race: "/pt/coach/perfect-race", protocols: "/pt/coach/protocols", ai: "/pt/coach/assistant", rkf: "/pt/coach/rkf", inbox: "/pt/coach/inbox", integrations: "/pt/coach/integrations", settings: "/pt/coach/settings",
 };
 
 const nav: { id: AppView; label: string; icon: LucideIcon; badge?: number }[] = [
   { id: "today", label: "Hoje", icon: Home }, { id: "athletes", label: "Equipe", icon: Users },
   { id: "practices", label: "Treinos", icon: Calendar }, { id: "seasons", label: "Temporada", icon: Trophy },
   { id: "videos", label: "Vídeos", icon: Film, badge: 2 }, { id: "analytics", label: "Análise", icon: BarChart3 },
-  { id: "rkf", label: "Núcleo RKF", icon: Gauge },
-  { id: "inbox", label: "Novidades", icon: Inbox, badge: 5 }, { id: "integrations", label: "Integrações", icon: Link2 },
+  { id: "race", label: "Prova Perfeita", icon: Trophy }, { id: "protocols", label: "Protocolos", icon: SlidersHorizontal },
+  { id: "inbox", label: "Atualização do Dia", icon: Inbox }, { id: "integrations", label: "Integrações", icon: Link2 },
+  { id: "ai", label: "RKF IA", icon: Sparkles },
 ];
 
 function viewFromPath(pathname: string): AppView {
@@ -42,7 +45,10 @@ function viewFromPath(pathname: string): AppView {
   if (pathname.includes("/seasons") || pathname.includes("/meets")) return "seasons";
   if (pathname.includes("/videos") || pathname.includes("/entries")) return "videos";
   if (pathname.includes("/analytics")) return "analytics";
-  if (pathname.includes("/rkf")) return "rkf";
+  if (pathname.includes("/rkf")) return "analytics";
+  if (pathname.includes("/perfect-race")) return "race";
+  if (pathname.includes("/protocols")) return "protocols";
+  if (pathname.includes("/assistant")) return "ai";
   if (pathname.includes("/inbox")) return "inbox";
   if (pathname.includes("/integrations")) return "integrations";
   if (pathname.includes("/settings")) return "settings";
@@ -75,7 +81,7 @@ function CoachWorkspace() {
   const go = (next: AppView) => { router.push(routes[next]); setMobileOpen(false); };
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 3200); };
   const openManage = (kind: ManagementKind = "athletes", create = false) => { setManageKind(kind); setCreateManaged(create); setModal("manage"); };
-  const openWorkout = (seed?: WorkoutSeed) => { setWorkoutSeed(seed); setModal("workout"); };
+  const openWorkout = (seed?: WorkoutSeed) => { setWorkoutSeed(seed); setModal(seed?.persistedId ? "workout" : "workout-entry"); };
   const searchResults = search.trim() ? [
     ...managedAthletes.filter((athlete) => `${athlete.name} ${athlete.handle} ${athlete.group}`.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map((athlete) => ({ id: athlete.id, label: athlete.name, detail: athlete.group, action: () => router.push(`${routes.athletes}/${athlete.id}`) })),
     ...nav.filter((item) => item.label.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map((item) => ({ id: item.id, label: item.label, detail: "Módulo", action: () => go(item.id) })),
@@ -129,7 +135,7 @@ function CoachWorkspace() {
       <header className="topbar">
         <button className="icon-button menu-button" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu size={21} /></button>
         <div className="global-search"><Search size={17} /><input ref={searchInput} value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && searchResults[0]) selectSearch(searchResults[0].action); }} placeholder="Buscar atleta, treino, prova…" aria-label="Busca global" /><kbd>⌘ K</kbd>{search && <div className="global-search-results">{searchResults.length ? searchResults.map((result) => <button key={`${result.detail}-${result.id}`} onClick={() => selectSearch(result.action)}><span><b>{result.label}</b><small>{result.detail}</small></span><ArrowRight size={15} /></button>) : <p>Nenhum atleta ou módulo encontrado.</p>}</div>}</div>
-        <div className="top-actions"><div className={`sync-state ${liveStatus === "error" ? "offline" : ""}`}><Wifi size={15} /><span>{liveStatus === "open" ? "Dados em tempo real" : liveStatus === "error" ? "Reconectando dados" : "Conectando dados"}</span></div><button className="icon-button bell-button" onClick={() => go("inbox")} aria-label="Novidades"><Bell size={19} /><i /></button><button className="secondary-button compact manage-button" onClick={() => openManage()}><SlidersHorizontal size={16} />Gerenciar</button><button className="primary-button compact" onClick={() => setModal("command")}><Plus size={17} />Criar</button></div>
+        <div className="top-actions"><div className={`sync-state ${liveStatus === "error" ? "offline" : ""}`}><Wifi size={15} /><span>{liveStatus === "open" ? "Dados em tempo real" : liveStatus === "error" ? "Reconectando dados" : "Conectando dados"}</span></div><button className="icon-button bell-button" onClick={() => go("inbox")} aria-label="Atualização do Dia"><Bell size={19} /><i /></button><button className="secondary-button compact manage-button" onClick={() => openManage()}><SlidersHorizontal size={16} />Gerenciar</button><button className="primary-button compact" onClick={() => setModal("command")}><Plus size={17} />Criar</button></div>
       </header>
       <main className="content">
         {view === "today" && <Today onCreate={() => openWorkout()} onNavigate={go} onAthlete={(id) => router.push(`${routes.athletes}/${id}`)} onNotify={notify} liveVersion={liveVersion} />}
@@ -137,9 +143,12 @@ function CoachWorkspace() {
         {view === "practices" && <Practices onCreate={openWorkout} onNotify={notify} refreshToken={workoutRefresh + liveVersion} />}
         {view === "seasons" && <Season onMeet={(id) => { setMeetId(id); setModal("meet"); }} onSettings={() => go("settings")} onCreateMeet={() => openManage("meets", true)} onNotify={notify} liveVersion={liveVersion} />}
         {view === "videos" && <Videos onVideo={(id) => { setVideoId(id); setModal("video"); }} onLive={() => setModal("live")} onNotify={notify} liveVersion={liveVersion} />}
-        {view === "analytics" && <Analytics onAthlete={(id) => router.push(`${routes.athletes}/${id}`)} onNotify={notify} liveVersion={liveVersion} />}
+        {view === "analytics" && <LoadControl />}
         {view === "rkf" && <RkfOperations onNotify={notify} />}
-        {view === "inbox" && <News onNavigate={go} onAthlete={(id) => router.push(`${routes.athletes}/${id}`)} onNotify={notify} />}
+        {view === "inbox" && <DailyUpdates />}
+        {view === "race" && <PerfectRace />}
+        {view === "protocols" && <Protocols onUse={openWorkout} />}
+        {view === "ai" && <AiAssistant embedded />}
         {view === "integrations" && <Integrations onNotify={notify} onCreateConnection={(provider = "garmin") => { setConnectionProvider(provider); setModal("connection"); }} liveVersion={liveVersion} />}
         {view === "settings" && <ProgramSettings onNotify={notify} />}
       </main>
@@ -148,6 +157,7 @@ function CoachWorkspace() {
     <nav className="mobile-nav">
       {nav.slice(0, 5).map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => go(item.id)}><item.icon size={19} /><span>{item.label}</span></button>)}
     </nav>
+    {modal === "workout-entry" && <WorkoutEntry seed={workoutSeed} onClose={() => setModal(null)} onChoose={(seed) => { setWorkoutSeed(seed); setModal("workout"); }} />}
     {modal === "workout" && <WorkoutComposer seed={workoutSeed} onClose={() => { setModal(null); setWorkoutSeed(undefined); }} onSave={() => { const edited = Boolean(workoutSeed?.persistedId); setModal(null); setWorkoutSeed(undefined); setWorkoutRefresh((value) => value + 1); router.push(routes.practices); notify(edited ? "Evento atualizado na agenda sem criar duplicata." : "Treino publicado e salvo no calendário."); }} />}
     {modal === "invite" && <InviteModal onClose={() => setModal(null)} onSave={() => { setModal(null); notify("Convite criado e copiado com segurança."); }} />}
     {modal === "video" && <VideoReview videoId={videoId} onClose={() => setModal(null)} onSave={() => { setModal(null); notify("Revisão técnica salva no prontuário."); }} />}
@@ -157,7 +167,7 @@ function CoachWorkspace() {
     {modal === "manage" && <ManagementCenter onClose={() => setModal(null)} onNotify={notify} initialKind={manageKind} createOnOpen={createManaged} />}
     {modal === "connection" && <ConnectionDialog initialProvider={connectionProvider} onClose={() => setModal(null)} onSave={notify} />}
     {toast && <div className="toast"><CircleCheck size={18} />{toast}</div>}
-    <AiAssistant />
+    {view !== "ai" && <AiAssistant />}
   </div>;
 }
 

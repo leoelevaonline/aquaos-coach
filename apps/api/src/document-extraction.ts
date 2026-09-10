@@ -7,7 +7,7 @@ import { parseDelimited } from "./managed-store.js";
 
 export const DOCUMENT_UPLOAD_EXTENSIONS = [
   ".pdf", ".csv", ".json", ".txt", ".jpg", ".jpeg", ".png", ".heic",
-  ".doc", ".docx", ".xls", ".xlsx", ".zip",
+  ".doc", ".docx", ".xls", ".xlsx", ".zip", ".wav",
 ] as const;
 
 const ARCHIVE_EXTRACTABLE_EXTENSIONS = new Set(
@@ -223,6 +223,7 @@ export async function extractDocument(buffer: Buffer, filename: string): Promise
 
 export function signatureMatches(buffer: Buffer, extension: string) {
   const ext = extension.toLowerCase();
+  if (ext === ".wav") return buffer.length >= 44 && buffer.subarray(0, 4).toString() === "RIFF" && buffer.subarray(8, 12).toString() === "WAVE";
   if (ext === ".pdf") return buffer.subarray(0, 5).toString() === "%PDF-";
   if ([".docx", ".xlsx", ".zip"].includes(ext)) return buffer[0] === 0x50 && buffer[1] === 0x4b
     && [[0x03, 0x04], [0x05, 0x06], [0x07, 0x08]].some(([third, fourth]) => buffer[2] === third && buffer[3] === fourth);

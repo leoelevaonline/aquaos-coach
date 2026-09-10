@@ -91,86 +91,17 @@ ${goals.map((g) => `- ${esc(g.name)} · prova: ${esc(g.event)} · tempo-alvo: ${
 ${audit.map((entry) => `- ${esc(entry.createdAt)} · ${esc(entry.action)} em ${esc(entry.resource)}: ${esc(entry.summary)}`).join("\n")}`);
   }
 
+  for (const [kind, label, fields] of [
+    ["racePlans", "Planos de prova", ["title", "athleteId", "description", "cycles"]],
+    ["protocols", "Protocolos", ["title", "category", "description"]],
+    ["staffAssessments", "Percepção da comissão", ["athleteId", "date", "assessment", "note"]],
+    ["readinessScores", "Prontidão registrada", ["athleteId", "date", "score", "readiness", "source"]],
+    ["loadSnapshots", "Carga registrada", ["athleteId", "date", "value", "atl", "ctl", "tss", "engine", "source"]],
+  ] as const) {
+    const records = list(kind).sort((a,b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,50);
+    if (records.length) sections.push(`## ${label} (até 50 registros recentes)\n${records.map(r => fields.map(field => `${field}: ${esc(r[field])}`).join(" · ")).join("\n")}`);
+  }
   return sections.join("\n\n");
-}
-
-/**
- * Snapshot rico de performance — espelha os dados que a interface do coach
- * exibe (prontidão, habilidades, metas, volumes, alertas, conectores).
- */
-function buildPerformanceContext(): string {
-  return `## Prontidão e corpo (hoje)
-- Ana Souza (@anaswim): readiness 86 · sono 8.1h · recuperação 82% · HRV 72ms · FCR 48 · wearable Garmin Fēnix 8 · sincronizado hoje 06:42
-- Caio Martins (@caiobfly): readiness 72 · sono 6.8h · recuperação 68% · HRV 59ms · FCR 52 · wearable Polar Vantage V3 · sincronizado hoje 07:03
-- Luiza Costa (@luizaback): readiness 58 (ATENÇÃO) · sono 5.9h · recuperação 54% · HRV 46ms · FCR 61 · wearable WHOOP 5.0 · sinc ontem 22:48
-- Pedro Lima (@pedrobreast): readiness 79 · sono 7.4h · recuperação 76% · HRV 64ms · FCR 50 · sem wearable
-- Gabriel Rocha (@gabrielmedley): readiness 67 · sono 7.0h · convite pendente há 4 dias (sem conta)
-- Marina Alves (@marinawater): readiness 63 · sono 6.5h · águas abertas · sem dados corporais
-
-## Metas individuais e distância
-- Ana Souza: 200 m Livre · PB 2:01.32 · meta 1:58.50 · gap +2.82 · ritmo necessário 0.94s/sem · ritmo observado 0.50s/sem (abaixo do necessário)
-- Caio Martins: 100 m Borboleta · PB 54.18 · meta 52.90 · gap +1.28
-- Luiza Costa: 100 m Costas · PB 1:03.86 · meta 1:01.20 · gap +2.66
-- Pedro Lima: 200 m Peito · PB 2:15.41 · meta 2:12.00 · gap +3.41 · em queda (−1.08s nas últimas 3 provas)
-- Marina Alves: 10 km águas abertas · gap +4:48
-- Gabriel Rocha: sem meta cadastrada
-
-## Habilidades técnicas (0-100, com tendência)
-- Ana Souza: Saída 78(↑3) · Velocidade 91(↑5) · Virada 74(↓1) · Ritmo 88(↑4) · Chegada 82(↑2)
-- Caio Martins: Saída 86(↑4) · Velocidade 88(↑2) · Virada 69(↓2) · Ritmo 76(↑1) · Chegada 71(=)
-- Luiza Costa: Saída 66(↓1) · Velocidade 79(↑3) · Virada 63(=) · Ritmo 72(↑2) · Chegada 68(↑1)
-- Pedro Lima: Saída 71(=) · Velocidade 82(↑1) · Virada 77(↑3) · Ritmo 75(↑2) · Chegada 73(=)
-
-## Volumes semanais (atual vs anterior)
-- Ana Souza: 28.600 m (↑ de 26.400) · presença 96%
-- Caio Martins: 27.100 m (↓ de 28.200 — queda de 14%) · presença 91%
-- Luiza Costa: 21.200 m (↓ de 24.500) · presença 87%
-- Pedro Lima: 23.400 m · presença 93%
-- Total da equipe: 148,9 km · meta semanal 155 km · ↑6,8% vs semana passada
-
-## Calendário de treinos (próximos)
-- 28/08 SEX 07:30 · Ritmo de prova · 200 Livre · 5.200 m · AN2 · Equipe inteira · RPE 7 · publicado
-- 28/08 SEX 16:00 · Força máxima · membros inferiores · 55 min · Elite · RPE 8 · publicado
-- 29/08 SÁB 08:00 · Aeróbio regenerativo + técnica · 3.800 m · A1 · Equipe inteira · RPE 4 · rascunho
-- 31/08 SEG 06:30 · VO₂ · tolerância ao lactato · 4.600 m · AN1 · Elite · RPE 9 · publicado
-- 01/09 TER 07:00 · Base aeróbia · eficiência · 5.800 m · A2 · Equipe inteira · RPE 6 · publicado
-- 02/09 QUA 16:30 · Potência e core · FORÇA · Desenvolvimento · RPE 7 · rascunho
-
-## Biblioteca de treinos
-Natação: Ritmo de 200 · fechamento forte (5.200m AN2) · Aeróbio específico · eficiência (6.100m A2) · Lactato · velocidade sustentada (4.200m AN1) · Regenerativo técnico (3.200m A1)
-Força: Potência de saída (55min, 6.4t) · Estabilidade de ombro (42min, 2.8t) · Força máxima geral (70min, 10.2t)
-
-## Temporada e fases
-Temporada Olímpica 2026/27 · 04/08/2026 a 19/07/2027 · semana 4 de 50
-Fases: Base geral (04/08–20/09, 45% concluída) · Construção específica (21/09–13/12) · Competição de inverno (14/12–31/01) · Transição (01/02–14/02)
-
-## Competições
-- Troféu Brasil - José Finkel · prioridade A · 18/09 (21 dias) · São Paulo · 50m · 4 atletas com índice · 12 inscrições
-- Campeonato Estadual Absoluto · prioridade B · 24/10 (57 dias) · Curitiba · 25m · 6 com índice · 19 inscrições
-- Open Internacional · prioridade A · 12/12 (106 dias) · Rio de Janeiro · 50m · 2 com índice · 8 inscrições
-
-## Índices do Troféu Brasil (50m)
-50 Livre: F 0:26.30 / M 0:23.40 · 100 Livre: F 0:57.20 / M 0:51.60 · 200 Livre: F 2:03.80 / M 1:52.40 · 100 Costas: F 1:04.90 / M 0:57.80 · 100 Peito: F 1:12.40 / M 1:03.20 · 100 Borboleta: F 1:03.10 / M 0:55.90
-
-## Vídeos e análise
-- Técnica de crawl · sessão diurna (Ana Souza) · 16,95s · 9 eventos detectados · aguardando revisão
-- Ritmo e eficiência · sessão noturna (Caio Martins) · 24,88s · 11 eventos detectados · aguardando revisão
-- 200 m Peito (Pedro Lima) · 2:15.41 · revisado
-- 100 m Costas (Luiza Costa) · 1:03.86 · revisado
-Total: 24 provas filmadas · 2 aguardando revisão · 4 esta semana
-
-## Alertas ativos (inbox)
-1. CRÍTICO — Readiness abaixo do padrão: Luiza 18% abaixo da média de 28 dias, sono curto e HRV em queda (há 12 min)
-2. ALERTA — Volume caiu 14%: Caio completou 3,9 km menos que a semana anterior (há 36 min)
-3. VÍDEO — 2 provas aguardam revisão: Ana e Caio com vídeos sem feedback técnico (há 2h)
-4. SUCESSO — Pedro está perto da meta: diferença para 2:12.00 caiu 1,08s nas últimas três provas
-5. CONTA — Convite pendente: Gabriel não ativou a conta enviada há 4 dias
-
-## Conectores de dispositivos
-Garmin Connect (conectado, 3 atletas, leitura+escrita) · Polar Flow (conectado, 1 atleta, leitura) · WHOOP (conectado, 1 atleta, leitura) · Google Health/Oura/Withings/Strava (prontos para conectar) · Apple Health (nativo, exige app iOS)
-
-## Carga da equipe (últimas 8 semanas)
-Aguda 538 · Crônica 504 · ACWR 1,07 (razoável) · aderência à carga 93,4% · presença geral 91% (32/35 sessões) · evolução de PBs: +12 nos últimos 90 dias · cobertura de wearable: 5 de 6`;
 }
 
 const SYSTEM_PROMPT = `Você é o assistente de inteligência do RKF Coach, a plataforma de gestão de equipes de natação.
@@ -448,18 +379,19 @@ export function registerAiRoutes(app: FastifyInstance, store: ManagedStore) {
   app.post("/api/v1/ai/chat", async (request, reply) => {
     const user = await getSession(sessionToken(request));
     if (!roleAllows(user, ["coach", "admin"])) return reply.code(user ? 403 : 401).send({ error: user ? "Ação exclusiva da comissão técnica" : "Autenticação necessária" });
-    const body = (await request.body) as { messages?: ChatMessage[] } | null;
+    const body = (await request.body) as { messages?: ChatMessage[]; language?: string } | null;
     const history = Array.isArray(body?.messages) ? body!.messages!.slice(-12) : [];
-    if (!history.length || history.some((m) => typeof m.content !== "string" || !m.content.trim())) {
+    if (!history.length || history.some((m) => !["user", "assistant"].includes(m.role) || typeof m.content !== "string" || !m.content.trim() || m.content.length > 16000)) {
       return reply.code(400).send({ error: "Envie ao menos uma mensagem válida." });
     }
     if (!LLM_API_KEY) {
       return reply.code(503).send({ error: "Assistente indisponível: configure LLM_API_KEY no ambiente da API." });
     }
 
-    const context = `${buildPlatformContext(store, user!.organizationId)}\n\n${user!.organizationId === "org-demo" ? buildPerformanceContext() : ""}`;
+    const context = buildPlatformContext(store, user!.organizationId);
+    const language = ({ "pt-BR": "português do Brasil", en: "English", es: "español", fr: "français" } as Record<string, string>)[body?.language ?? "pt-BR"] ?? "português do Brasil";
     const messages = [
-      { role: "system", content: `${SYSTEM_PROMPT}\n\n=== SNAPSHOT DA PLATAFORMA ===\n${context}` },
+      { role: "system", content: `${SYSTEM_PROMPT}\nIdioma escolhido pelo técnico: ${language}. Responda nesse idioma.\n\n=== SNAPSHOT DA PLATAFORMA ===\n${context}` },
       ...history.map((m) => ({ role: m.role, content: m.content })),
     ];
 

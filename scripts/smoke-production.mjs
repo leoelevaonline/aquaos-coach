@@ -34,7 +34,7 @@ await check('Live PostgreSQL query', async () => {
   try { await client.connect(); assert.equal((await client.query('SELECT 1 AS ok')).rows[0].ok, 1); }
   finally { await client.end(); }
 });
-for (const path of ['/', '/pt/coach/today', '/pt/coach/athletes', '/pt/coach/practices', '/pt/coach/rkf', '/pt/athlete/home', '/manifest.webmanifest']) {
+for (const path of ['/', '/pt/coach/today', '/pt/coach/athletes', '/pt/coach/practices', '/pt/coach/rkf', '/pt/coach/analytics', '/pt/coach/seasons', '/pt/coach/videos', '/pt/coach/perfect-race', '/pt/coach/protocols', '/pt/coach/assistant', '/pt/coach/inbox', '/pt/athlete/home', '/manifest.webmanifest']) {
   await check(`HTTPS ${path}`, async () => { const r = await request(path); await r.arrayBuffer(); });
 }
 await check('API persistence health', async () => {
@@ -68,6 +68,12 @@ for (const role of ['coach', 'athlete']) {
         const data = await (await request('/api/v1/ai/status', 200, cookie)).json();
         assert.equal(data.available, true);
       });
+      for (const kind of ['racePlans', 'protocols', 'staffAssessments', 'readinessScores', 'macrocycles', 'mesocycles', 'microcycles', 'loadSnapshots']) {
+        await check(`coach: managed ${kind}`, async () => {
+          const data = await (await request(`/api/v1/manage/${kind}`, 200, cookie)).json();
+          assert.ok(Array.isArray(data.data));
+        });
+      }
       await check('AI configured model returns an answer (synthetic data only)', async () => {
         const response = await fetch(`${process.env.LLM_BASE_URL.replace(/\/$/, '')}/chat/completions`, {
           method: 'POST',

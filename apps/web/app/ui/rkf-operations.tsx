@@ -128,8 +128,8 @@ function Status({ value }: { value: string }) {
   return <span className={`rkf-status ${tone}`}>{value.replaceAll("_", " ")}</span>;
 }
 
-export function RkfOperations({ onNotify }: { onNotify: (message: string) => void }) {
-  const [tab, setTab] = useState<Tab>("command");
+export function RkfOperations({ onNotify, loadOnly = false }: { onNotify: (message: string) => void; loadOnly?: boolean }) {
+  const [tab, setTab] = useState<Tab>(loadOnly ? "load" : "command");
   const [data, setData] = useState<Bootstrap>();
   const [ingestions, setIngestions] = useState<Ingestion[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
@@ -165,13 +165,13 @@ export function RkfOperations({ onNotify }: { onNotify: (message: string) => voi
   if (!data) return <div className="rkf-loading"><LoaderCircle className="spin" size={24} /><strong>{error || "Carregando núcleo RKF V5.1"}</strong>{error && <button className="secondary-button" onClick={() => void refresh()}>Tentar novamente</button>}</div>;
 
   return <>
-    <PageTitle kicker="NÚCLEO METODOLÓGICO · RKF V5.1" title="Centro de decisão esportiva" subtitle="Prescrição, carga, prontidão e governança reunidas em uma operação auditável.">
+    <PageTitle kicker="NÚCLEO METODOLÓGICO · RKF V5.1" title={loadOnly ? "Núcleo RKF · Controle de Carga" : "Centro de decisão esportiva"} subtitle={loadOnly ? "Carga interna, aderência e histórico do motor RKF." : "Prescrição, carga, prontidão e governança reunidas em uma operação auditável."}>
       <span className="rkf-validation-label"><Sparkles size={15} />Ambiente de validação</span>
       <button className="secondary-button" onClick={() => void refresh()}><RefreshCw size={16} />Atualizar</button>
     </PageTitle>
     <div className="rkf-provenance"><ShieldCheck size={17} /><span><strong>Origem declarada</strong>{data.provenance.label}</span></div>
     <nav className="rkf-tabs" aria-label="Módulos RKF" role="tablist">
-      {tabs.map((item) => <button key={item.id} id={`rkf-tab-${item.id}`} type="button" role="tab" aria-selected={tab === item.id} aria-controls={`rkf-panel-${item.id}`} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><item.icon aria-hidden="true" size={17} />{item.label}</button>)}
+      {tabs.filter(item => !loadOnly || item.id === "load").map((item) => <button key={item.id} id={`rkf-tab-${item.id}`} type="button" role="tab" aria-selected={tab === item.id} aria-controls={`rkf-panel-${item.id}`} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><item.icon aria-hidden="true" size={17} />{item.label}</button>)}
     </nav>
 
     <div id={`rkf-panel-${tab}`} role="tabpanel" aria-labelledby={`rkf-tab-${tab}`}>

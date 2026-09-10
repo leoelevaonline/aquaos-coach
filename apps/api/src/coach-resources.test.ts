@@ -1,0 +1,31 @@
+import Fastify from 'fastify';
+import { afterAll, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { ManagedStore } from './managed-store.js';
+import { registerOperationalRoutes } from './operational-routes.js';
+import { login } from './auth.js';
+import { signatureMatches } from './document-extraction.js';
+const root=mkdtempSync(join(tmpdir(),'coach-resources-'));
+const path=join(root,'data.json'), store=new ManagedStore(path), app=Fastify();
+registerOperationalRoutes(app,store);
+const cookie=`natacao_session=${(await login('coach@natacao.local','natacao-demo'))!.token}`;
+const athlete=`natacao_session=${(await login('ana@natacao.local','natacao-demo'))!.token}`;
+afterAll(async()=>{await app.close();rmSync(root,{recursive:true,force:true});});
+describe('Novos recursos da comissão',()=>{
+  for(const kind of ['racePlans','protocols','staffAssessments']) it(`${kind}: persiste, edita, audita e isola acesso`,async()=>{
+    const created=await app.inject({method:'POST',url:`/api/v1/manage/${kind}`,headers:{cookie},payload:{title:'Plano de teste',description:'Critérios técnicos',athleteId:'ana-souza'}});
+    expect(created.statusCode).toBe(201); const id=created.json().id;
+    expect((await app.inject({method:'GET',url:`/api/v1/manage/${kind}`,headers:{cookie:athlete}})).statusCode).toBe(403);
+    const edited=await app.inject({method:'PATCH',url:`/api/v1/manage/${kind}/${id}`,headers:{cookie},payload:{title:'Revisado'}});
+    expect(edited.statusCode).toBe(200);
+    expect(new ManagedStore(path).get(kind as 'protocols',id)?.title).toBe('Revisado');
+    store.create(kind as 'protocols',{id:'outside-'+kind,title:'Outra equipe',organizationId:'outside'});
+    const list=await app.inject({method:'GET',url:`/api/v1/manage/${kind}`,headers:{cookie}});
+    expect(list.json().data.some((r:{id:string})=>r.id==='outside-'+kind)).toBe(false);
+    expect((await app.inject({method:'DELETE',url:`/api/v1/manage/${kind}/${id}`,headers:{cookie}})).statusCode).toBe(200);
+    expect(store.audit().some(r=>r.resourceId===id)).toBe(true);
+  });
+  it('valida a assinatura de áudio WAV',()=>{const wav=Buffer.alloc(44);wav.write('RIFF',0);wav.write('WAVE',8);expect(signatureMatches(wav,'.wav')).toBe(true);expect(signatureMatches(Buffer.from('arquivo falso'),'.wav')).toBe(false);});
+});

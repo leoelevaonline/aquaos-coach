@@ -91,8 +91,9 @@ function ThinkingIndicator() {
   );
 }
 
-export function AiAssistant() {
-  const [open, setOpen] = useState(false);
+export function AiAssistant({ embedded = false }: { embedded?: boolean }) {
+  const [open, setOpen] = useState(embedded);
+  const [language, setLanguage] = useState("pt-BR");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -121,7 +122,7 @@ export function AiAssistant() {
       const response = await apiRequest<{ reply: string }>("/api/v1/ai/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages }),
+        body: JSON.stringify({ messages: nextMessages, language }),
       });
       setMessages((current) => [...current, { role: "assistant", content: response.reply }]);
     } catch (error) {
@@ -142,16 +143,16 @@ export function AiAssistant() {
 
   return (
     <>
-      <div className="ai-panel" role="dialog" aria-label="Assistente de IA">
+      <div className={`ai-panel ${embedded ? "ai-embedded" : ""}`} role={embedded ? "region" : "dialog"} aria-label="RKF IA">
         <header className="ai-panel-head">
           <div className="ai-panel-title">
             <span className="ai-panel-badge"><Bot size={17} /></span>
             <div>
-              <strong>Assistente RKF Coach</strong>
+              <strong>RKF IA</strong>
               <small>{available === false ? "offline" : "conectado aos dados da plataforma"}</small>
             </div>
           </div>
-          <button className="ai-panel-close" onClick={() => setOpen(false)} aria-label="Fechar assistente"><X size={18} /></button>
+          <label className="coach-field">Idioma da resposta<select value={language} onChange={e => setLanguage(e.target.value)}><option value="pt-BR">Português</option><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option></select></label>{!embedded && <button className="ai-panel-close" onClick={() => setOpen(false)} aria-label="Fechar assistente"><X size={18} /></button>}
         </header>
 
         <div className="ai-panel-body" ref={scrollRef}>
@@ -159,7 +160,7 @@ export function AiAssistant() {
             <div className="ai-welcome">
               <span className="ai-welcome-icon"><MessageCircle size={22} /></span>
               <strong>Pergunte qualquer coisa da plataforma</strong>
-              <p>Atletas, treinos, metas, competições, vídeos, prontidão, volumes e auditoria. Eu leio tudo em tempo real.</p>
+              <p>Atletas, treinos, metas, competições, vídeos, prontidão, volumes e auditoria. As respostas usam os registros disponíveis no momento da consulta.</p>
               <div className="ai-suggestions">
                 {SUGGESTIONS.map((suggestion) => (
                   <button key={suggestion} onClick={() => void send(suggestion)}>{suggestion}</button>
@@ -188,7 +189,7 @@ export function AiAssistant() {
           <input
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder={available === false ? "Assistente indisponível. Configure LLM_API_KEY" : "Pergunte sobre atletas, treinos, metas…"}
+            placeholder={available === false ? "Assistente indisponível. Tente novamente mais tarde." : "Pergunte sobre atletas, treinos, metas…"}
             aria-label="Mensagem para o assistente"
             disabled={available === false}
           />

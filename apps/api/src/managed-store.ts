@@ -14,7 +14,7 @@ export const resourceKinds = [
   "sessionResults", "setResults", "repetitionResults", "splitResults", "trainingIngestions",
   "performanceBenchmarks", "evolutionAssessments", "distanceFatigueRules", "trainingSourceAssets",
   "trainingExtractions", "trainingReviewItems", "importedTrainingSessions", "importedTrainingBlocks",
-  "athleteSessionAssignments", "loadCalculations", "videoAnalysisJobs", "trackAssignments", "invitations",
+  "athleteSessionAssignments", "loadCalculations", "videoAnalysisJobs", "trackAssignments", "invitations", "racePlans", "protocols", "staffAssessments",
 ] as const;
 export type ResourceKind = typeof resourceKinds[number];
 
@@ -153,6 +153,9 @@ function seed(): DatabaseShape {
       videoAnalysisJobs: records([]),
       trackAssignments: records([]),
       invitations: records([]),
+      racePlans: records([]),
+      protocols: records([]),
+      staffAssessments: records([]),
     },
     audit: [],
   };

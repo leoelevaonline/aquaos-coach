@@ -16,9 +16,10 @@ import {
   AthleteMessageDialog, BodyReadinessDialog, EvidenceDialog, GoalEditor, MethodologyDialog, exportAthletePerformance,
   initialGoalFor, calculateGoalPacing, type AthletePanel,
 } from "./athlete-performance-actions";
+import { ReadinessPanel, DailyWater, CycleOverview } from "./coach-panels";
 import { WorkoutTemplateEditor, type WorkoutSeed } from "./workout-library-actions";
 
-export type AppView = "today" | "athletes" | "practices" | "seasons" | "videos" | "analytics" | "rkf" | "inbox" | "integrations" | "settings";
+export type AppView = "today" | "athletes" | "practices" | "seasons" | "videos" | "analytics" | "rkf" | "inbox" | "integrations" | "settings" | "race" | "protocols" | "ai";
 
 type AutomationProposal = { id: string; athleteId: string; athleteName: string; priority: "CRITICAL" | "HIGH" | "MEDIUM" | "OPPORTUNITY"; action: string; title: string; rationale: string; triggers: string[]; requiresCoachApproval: boolean; updatedAt: string };
 type AutomationSnapshot = { engineVersion: string; latestRun?: { updatedAt?: string; cause?: string }; counts: { critical: number; high: number; medium: number; opportunity: number; requiringApproval: number }; proposals: AutomationProposal[] };
@@ -127,35 +128,17 @@ export function Today({ onCreate, onNavigate, onAthlete, onNotify, liveVersion =
     <section className="today-layout">
       <div className="stack">
         <article className="card action-card">
-          <SectionHead title="O que vamos nadar hoje?" subtitle="Crie do seu jeito. A estrutura aparece automaticamente." />
+          <SectionHead title="Treino do dia" subtitle="Crie do seu jeito. A estrutura aparece automaticamente." />
           <div className="create-options">
             <button onClick={onCreate}><span className="option-icon aqua"><MessageSquare size={20} /></span><div><strong>Escrever ou ditar treino</strong><small>Texto livre, voz, foto ou documento</small></div><ArrowRight size={17} /></button>
             <button onClick={() => onNavigate("practices")}><span className="option-icon violet"><Library size={20} /></span><div><strong>Usar a biblioteca</strong><small>Treinos de natação e força</small></div><ArrowRight size={17} /></button>
             <button onClick={onCreate}><span className="option-icon coral"><Sparkles size={20} /></span><div><strong>Criar com o assistente</strong><small>Objetivo, carga e grupo como contexto</small></div><ArrowRight size={17} /></button>
           </div>
         </article>
-        <article className="card">
-          <SectionHead title="Na água hoje" subtitle={`${displayAthletes.length || "…"} atletas · 5.200 m · AN2`} action="Ver sessão" onAction={() => onNavigate("practices")} />
-          <div className="session-strip"><div className="session-time"><Clock size={15} /><b>07:30</b></div><div><strong>Ritmo de prova · 200 Livre</strong><small>3 blocos · 1h42 estimados · Piscina olímpica</small></div><span className="zone-tag an2">AN2</span></div>
-          <div className="water-list">
-            {displayAthletes.slice(0, visibleCount).map((athlete) => <button key={athlete.id} onClick={() => onAthlete(athlete.id)}><Avatar initials={athlete.initials} color={athlete.color} small /><span><b>{athlete.name}</b><small>{athlete.group}</small></span><em>{formatNumber(athlete.weeklyDistance)} m</em><ProgressRing value={athlete.readiness ?? 0} size="small" /></button>)}
-            {hiddenCount > 0 && <button className="water-more" onClick={() => onNavigate("athletes")}><span className="water-more-chip">+{hiddenCount} atletas</span><span>ver plantel completo</span><ArrowRight size={15} /></button>}
-          </div>
-        </article>
+        <DailyWater onAthlete={onAthlete} />
       </div>
       <aside className="stack">
-        <article className="card attention-card automation-card">
-          <SectionHead title="Central adaptativa" subtitle={automationSubtitle} action={automationBusy === "recompute" ? "Calculando…" : "Recalcular"} onAction={() => void refreshAutomation()} />
-          <div className="automation-summary"><span className="critical"><b>{automation?.counts.critical ?? 0}</b> críticos</span><span className="high"><b>{automation?.counts.high ?? 0}</b> atenção</span><span className="opportunity"><b>{automation?.counts.opportunity ?? 0}</b> progressão</span></div>
-          <div className="automation-list">
-            {automationQueue.slice(0, 3).map((proposal) => <article className={`automation-item ${proposal.priority.toLowerCase()}`} key={proposal.id}>
-              <button className="automation-copy" onClick={() => onAthlete(proposal.athleteId)}><span className="automation-priority">{proposal.priority === "CRITICAL" ? "CRÍTICO" : proposal.priority === "HIGH" ? "ATENÇÃO" : proposal.priority === "OPPORTUNITY" ? "OPORTUNIDADE" : "MONITORAR"}</span><b>{proposal.title}</b><p>{proposal.rationale}</p><span className="automation-triggers">{proposal.triggers.slice(0, 2).map((trigger) => <em key={trigger}>{trigger}</em>)}</span></button>
-              <div className="automation-actions">{proposal.requiresCoachApproval ? <><button disabled={automationBusy === proposal.id} onClick={() => void decideAutomation(proposal, "approve")}>Criar ajuste</button><button disabled={automationBusy === proposal.id} onClick={() => void decideAutomation(proposal, "dismiss")}>Manter plano</button></> : <button disabled={automationBusy === proposal.id} onClick={() => void decideAutomation(proposal, "dismiss")}>Reconhecer</button>}</div>
-            </article>)}
-            {!automationQueue.length && <div className="automation-empty"><CircleCheck size={22} /><div><b>Programa dentro dos guardrails</b><small>Nenhuma decisão pendente neste momento.</small></div></div>}
-          </div>
-          <p className="automation-footnote"><Activity size={13} />Atualiza após treino, resultado, check-in, carga ou alteração de prescrição. Ajustes de carga exigem aprovação.</p>
-        </article>
+        <ReadinessPanel compact />
         <article className="card load-card">
           <SectionHead title="Carga da equipe" subtitle="Últimas 8 semanas" action="Analisar" onAction={() => onNavigate("analytics")} />
           <div className="mini-bars dynamic-bars">{chartSeries.map((week, index) => <span className="load-week" key={`${week.label}-${index}`} title={`${week.label}: ${formatNumber(week.completedMeters)} m realizados`}><i className="load-plan" style={{ height: `${Math.max(3, week.plannedMeters / chartMax * 100)}%` }} /><i className="load-done" style={{ height: `${Math.max(3, week.completedMeters / chartMax * 100)}%` }} /><small>{week.label}</small></span>)}</div>
@@ -277,7 +260,7 @@ export function AthleteDetail({ athlete, onBack, onCreate, onNavigate, onNotify 
 type PublishedWorkoutRecord = { id: string; title?: string; status?: string; date?: string; scheduledAt?: string; distanceMeters?: number; zone?: string; kind?: string; target?: string; athleteId?: string; source?: string; prescriptionText?: string; blocks?: string[] };
 
 export function Practices({ onCreate, onNotify, refreshToken = 0 }: { onCreate: (seed?: WorkoutSeed) => void; onNotify: (message: string) => void; refreshToken?: number }) {
-  const [tab, setTab] = useState<"week" | "swim" | "strength">("week");
+  const [tab, setTab] = useState<"day" | "week" | "mesocycles" | "macrocycles" | "swim" | "strength">("week");
   const [editor, setEditor] = useState<{ initial?: WorkoutSeed } | null>(null);
   const [published, setPublished] = useState<PublishedWorkoutRecord[]>([]);
   const [libraryRecords, setLibraryRecords] = useState<PublishedWorkoutRecord[]>([]);
@@ -289,8 +272,9 @@ export function Practices({ onCreate, onNotify, refreshToken = 0 }: { onCreate: 
   }, [refreshToken, libraryRefresh]);
   return <>
     <PageTitle kicker="PLANEJAMENTO" title="Treinos" subtitle="Prescreva, personalize e publique sem duplicar sessões."><button className="secondary-button" onClick={() => setTab("swim")}><Library size={17} />Bibliotecas</button><button className="primary-button" onClick={() => onCreate()}><Plus size={17} />Criar treino</button></PageTitle>
-    <div className="tab-bar"><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}><Calendar size={16} />Semana</button><button className={tab === "swim" ? "active" : ""} onClick={() => setTab("swim")}><Waves size={16} />Biblioteca de natação</button><button className={tab === "strength" ? "active" : ""} onClick={() => setTab("strength")}><Dumbbell size={16} />Biblioteca de força</button></div>
-    {tab === "week" && <WeekCalendar onCreate={onCreate} published={published} />}
+    <div className="tab-bar"><button className={tab === "day" ? "active" : ""} onClick={() => setTab("day")}>Dia</button><button className={tab === "mesocycles" ? "active" : ""} onClick={() => setTab("mesocycles")}>Mesociclo</button><button className={tab === "macrocycles" ? "active" : ""} onClick={() => setTab("macrocycles")}>Macrociclo</button><button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}><Calendar size={16} />Microciclo semanal</button><button className={tab === "swim" ? "active" : ""} onClick={() => setTab("swim")}><Waves size={16} />Biblioteca de natação</button><button className={tab === "strength" ? "active" : ""} onClick={() => setTab("strength")}><Dumbbell size={16} />Biblioteca de força</button></div>
+    {(tab === "week" || tab === "day") && <WeekCalendar key={tab} dayOnly={tab === "day"} onCreate={onCreate} published={published} />}
+    {(tab === "macrocycles" || tab === "mesocycles") && <CycleOverview level={tab} />}
     {tab === "swim" && <LibraryView kind="swim" records={libraryRecords} onUse={onCreate} onEdit={(initial) => setEditor({ initial })} />}
     {tab === "strength" && <LibraryView kind="strength" records={libraryRecords} onUse={onCreate} onEdit={(initial) => setEditor({ initial })} />}
     {editor && <WorkoutTemplateEditor initial={editor.initial} onClose={() => setEditor(null)} onUse={(seed) => { setEditor(null); onCreate(seed); }} onNotify={onNotify} onSaved={() => setLibraryRefresh((value) => value + 1)} />}
@@ -319,28 +303,30 @@ function LegacyWeekCalendar({ onCreate, published }: { onCreate: (seed?: Workout
   return <section className="card calendar-card"><div className="calendar-toolbar"><div><button className="icon-button" aria-label="Semana anterior" onClick={() => setWeekOffset((value) => value - 1)}><ChevronLeft size={18} /></button><button className="icon-button" aria-label="Próxima semana" onClick={() => setWeekOffset((value) => value + 1)}><ChevronRight size={18} /></button><button className="secondary-button small" onClick={() => setWeekOffset(0)}>Esta semana</button></div><strong>{weekLabel}</strong><div className="week-load"><Sparkles size={15} />Carga prevista <b>{formatNumber(totalLoad)}</b></div></div><div className="week-grid">{days.map((item) => <div className={`day-column ${item.iso === "2026-08-29" ? "today" : ""}`} key={item.iso}><div className="day-head"><span>{item.day}</span><b>{item.date}</b><small>{item.load ? `${item.load} u.a.` : "Descanso"}</small></div><div className="day-content">{item.sessions.length ? item.sessions.map((practice) => <button className={`practice-card ${practice.type}`} key={practice.id} onClick={() => onCreate({ title: practice.title, prompt: `${practice.title}\n${practice.distance ? `${practice.distance} m` : "Sessão de força"}\n${practice.group}`, distanceMeters: practice.distance, zone: practice.zone, kind: practice.type === "strength" ? "strength" : "swim" })}><span><i />{practice.time}</span><strong>{practice.title}</strong><small>{practice.distance ? `${formatNumber(practice.distance)} m` : "55 min"} · {practice.group}</small><div><span className={`zone-tag ${practice.zone.toLowerCase()}`}>{practice.zone}</span><em>{practice.status === "published" ? <><CircleCheck size={12} />Publicado</> : "Rascunho"}</em></div></button>) : <button className="empty-day" onClick={() => onCreate()}><Plus size={17} />Planejar o dia</button>}</div></div>)}</div><div className="calendar-footer"><div><span><i className="swim-dot" />Natação</span><span><i className="strength-dot" />Força</span><span><i className="draft-dot" />Rascunho</span></div><p><Sparkles size={14} />Carga calculada pelo RkfLoadEngine V5.1</p></div></section>;
 }
 
-function WeekCalendar({ onCreate, published }: { onCreate: (seed?: WorkoutSeed) => void; published: PublishedWorkoutRecord[] }) {
+function WeekCalendar({ onCreate, published, dayOnly = false }: { onCreate: (seed?: WorkoutSeed) => void; published: PublishedWorkoutRecord[]; dayOnly?: boolean }) {
   const [weekOffset, setWeekOffset] = useState(0);
+  const [singleDay, setSingleDay] = useState(dayOnly);
+  const [dayOffset, setDayOffset] = useState(0);
   const current = new Date();
-  const monday = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate(), 12));
-  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7) + weekOffset * 7);
+  const monday = new Date(Date.UTC(current.getFullYear(), current.getMonth(), current.getDate(), 12));
+  monday.setUTCDate(monday.getUTCDate() + (singleDay ? dayOffset : -((monday.getUTCDay() + 6) % 7) + weekOffset * 7));
   const names = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB"];
   const monthNames = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-  const todayIso = current.toISOString().slice(0, 10);
-  const days = Array.from({ length: 7 }, (_, index) => {
+  const todayIso = [current.getFullYear(), String(current.getMonth()+1).padStart(2,"0"), String(current.getDate()).padStart(2,"0")].join("-");
+  const days = Array.from({ length: singleDay ? 1 : 7 }, (_, index) => {
     const date = new Date(monday.getTime() + index * 86_400_000);
     const iso = date.toISOString().slice(0, 10);
     const synced = published.filter((record) => record.date === iso).map((record) => ({ id: record.id, persistedId: record.id, title: record.title ?? "Treino publicado", distance: Number(record.distanceMeters ?? 0), zone: record.zone ?? "A1", type: record.kind === "strength" ? "strength" as const : "swim" as const, time: record.scheduledAt?.slice(11, 16) ?? "08:00", scheduledAt: record.scheduledAt ?? `${iso}T08:00`, status: record.status === "published" ? "published" as const : "draft" as const, group: record.target ?? (record.athleteId ? `Individual · ${record.athleteId}` : "Equipe inteira"), prompt: record.prescriptionText ?? "Sessão registrada na agenda.", source: record.source }));
-    const sessions = [...practices.filter((practice) => practice.date === iso).map((practice) => ({ id: practice.id, persistedId: undefined, title: practice.title, distance: practice.distance, zone: practice.zone, type: practice.type === "strength" ? "strength" as const : "swim" as const, time: practice.time, scheduledAt: `${iso}T${practice.time}`, status: practice.status as "published" | "draft", group: practice.group, prompt: `${practice.title}\n${practice.distance ? `${practice.distance} m` : "Sessão de força"}\n${practice.group}`, source: "calendar-demo" })), ...synced];
-    return { iso, day: names[date.getUTCDay()], date: String(date.getUTCDate()).padStart(2, "0"), month: monthNames[date.getUTCMonth()], sessions, load: Math.round(sessions.reduce((sum, session) => sum + session.distance, 0) / 8) };
+    const sessions = synced;
+    return { iso, day: names[date.getUTCDay()], date: String(date.getUTCDate()).padStart(2, "0"), month: monthNames[date.getUTCMonth()], sessions, load: sessions.reduce((sum, session) => sum + session.distance, 0) };
   });
-  const first = days[0]; const last = days[6];
+  const first = days[0]; const last = days[days.length-1];
   const weekLabel = `${first.date} ${first.month === last.month ? "" : `de ${first.month} `}- ${last.date} de ${last.month} de ${new Date(monday).getUTCFullYear()}`;
   const totalLoad = days.reduce((sum, day) => sum + day.load, 0);
   return <section className="card calendar-card">
-    <div className="calendar-toolbar"><div><button className="icon-button" aria-label="Semana anterior" onClick={() => setWeekOffset((value) => value - 1)}><ChevronLeft size={18} /></button><button className="icon-button" aria-label="Próxima semana" onClick={() => setWeekOffset((value) => value + 1)}><ChevronRight size={18} /></button><button className="secondary-button small" onClick={() => setWeekOffset(0)}>Esta semana</button></div><strong>{weekLabel}</strong><div className="week-load"><Sparkles size={15} />Carga prevista <b>{formatNumber(totalLoad)}</b></div></div>
-    <div className="week-grid">{days.map((day) => <div className={`day-column ${day.iso === todayIso ? "today" : ""}`} key={day.iso}><div className="day-head"><span>{day.day}</span><b>{day.date}</b><small>{day.load ? `${day.load} u.a.` : "Descanso"}</small></div><div className="day-content">{day.sessions.length ? day.sessions.map((session) => <button className={`practice-card ${session.type}`} key={session.id} onClick={() => onCreate({ id: session.id, persistedId: session.persistedId, title: session.title, prompt: session.prompt, distanceMeters: session.distance, zone: session.zone, kind: session.type, scheduledAt: session.scheduledAt, target: session.group, source: session.source })}><span><i />{session.time}</span><strong>{session.title}</strong><small>{session.distance ? `${formatNumber(session.distance)} m` : "55 min"} · {session.group}</small><div><span className={`zone-tag ${session.zone.toLowerCase()}`}>{session.zone}</span><em>{session.status === "published" ? <><CircleCheck size={12} />Publicado</> : "Rascunho"}</em></div></button>) : <button className="empty-day" aria-label={`Planejar ${day.day}, ${day.date} de ${day.month}`} onClick={() => onCreate({ title: `Sessão de ${day.day.toLowerCase()} · ${day.date}/${String(new Date(`${day.iso}T12:00:00`).getMonth() + 1).padStart(2, "0")}`, prompt: "", distanceMeters: 0, zone: "A1", kind: "swim", scheduledAt: `${day.iso}T08:00`, target: "Equipe inteira" })}><Plus size={17} />Planejar o dia</button>}</div></div>)}</div>
-    <div className="calendar-footer"><div><span><i className="swim-dot" />Natação</span><span><i className="strength-dot" />Força</span><span><i className="draft-dot" />Rascunho</span></div><p><Sparkles size={13} />Cargas estimadas pelo RkfLoadEngine</p></div>
+    <div className="calendar-toolbar"><div><button className="icon-button" aria-label={singleDay ? "Dia anterior" : "Semana anterior"} onClick={() => singleDay ? setDayOffset(v => v - 1) : setWeekOffset(v => v - 1)}><ChevronLeft size={18} /></button><button className="icon-button" aria-label={singleDay ? "Próximo dia" : "Próxima semana"} onClick={() => singleDay ? setDayOffset(v => v + 1) : setWeekOffset(v => v + 1)}><ChevronRight size={18} /></button><button className="secondary-button small" onClick={() => { setWeekOffset(0); setDayOffset(0); setSingleDay(v => !v); }}>{singleDay ? "Microciclo semanal" : "Dia"}</button></div><strong>{weekLabel}</strong><div className="week-load"><Sparkles size={15} />Volume previsto <b>{formatNumber(totalLoad)} m</b></div></div>
+    <div className={`week-grid ${singleDay ? "single-day" : ""}`}>{days.map((day) => <div className={`day-column ${day.iso === todayIso ? "today" : ""}`} key={day.iso}><div className="day-head"><span>{day.day}</span><b>{day.date}</b><small>{day.load ? `${formatNumber(day.load)} m` : "Descanso"}</small></div><div className="day-content">{day.sessions.length ? day.sessions.map((session) => <button className={`practice-card ${session.type}`} key={session.id} onClick={() => onCreate({ id: session.id, persistedId: session.persistedId, title: session.title, prompt: session.prompt, distanceMeters: session.distance, zone: session.zone, kind: session.type, scheduledAt: session.scheduledAt, target: session.group, source: session.source })}><span><i />{session.time}</span><strong>{session.title}</strong><small>{session.distance ? `${formatNumber(session.distance)} m` : "55 min"} · {session.group}</small><div><span className={`zone-tag ${session.zone.toLowerCase()}`}>{session.zone}</span><em>{session.status === "published" ? <><CircleCheck size={12} />Publicado</> : "Rascunho"}</em></div></button>) : <button className="empty-day" aria-label={`Planejar ${day.day}, ${day.date} de ${day.month}`} onClick={() => onCreate({ title: `Sessão de ${day.day.toLowerCase()} · ${day.date}/${String(new Date(`${day.iso}T12:00:00`).getMonth() + 1).padStart(2, "0")}`, prompt: "", distanceMeters: 0, zone: "A1", kind: "swim", scheduledAt: `${day.iso}T08:00`, target: "Equipe inteira" })}><Plus size={17} />Planejar o dia</button>}</div></div>)}</div>
+    <div className="calendar-footer"><div><span><i className="swim-dot" />Natação</span><span><i className="strength-dot" />Força</span><span><i className="draft-dot" />Rascunho</span></div><p><Sparkles size={13} />Volume das sessões cadastradas; carga disponível em Análise</p></div>
   </section>;
 }
 
